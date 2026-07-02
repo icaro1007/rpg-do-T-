@@ -1150,7 +1150,10 @@ function atualizarUnidoesNoCampo(campoHTML) {
             // O dano base da carta Unidão é 1. Somamos o maiorDano encontrado.
             let novoDano = 1 + maiorDano; 
             spanDano.innerText = novoDano;
-            
+
+            if (novoDano > 1) {
+                mostrarEfeitoAtaque(idUnico);
+            }
             // Opcional: Salva no objeto para referência se precisares depois
             bonusUnidao[idUnico] = novoDano;
         }
@@ -1264,6 +1267,9 @@ function equiparSuporte(idAlvo) {
         
         let itemNaMao = document.getElementById("pacote-" + idItemNaMao);
         if (itemNaMao) itemNaMao.remove();
+
+        // 🚨 EFEITO DE GANHO DE ATAQUE AQUI:
+            mostrarEfeitoAtaque(idAlvo);
         
         narrar(`🏹 A Besta foi equipada em [${nomeAlvo}]! O dano base subiu para ${danoAtual + bonus}.`);
         suportePreparado = null;
@@ -1284,6 +1290,9 @@ function equiparSuporte(idAlvo) {
     if (suportePreparado === 'Adiv') {
         let itemNaMao = document.getElementById("pacote-" + idItemNaMao);
         if (itemNaMao) itemNaMao.remove();
+
+        // 🚨 NOVO EFEITO AQUI: Coração partido caindo da carta alvo!
+        mostrarEfeitoPerdaVida(idPuro);
         
         narrar(`🧪 Splash! A poção Adiv foi atirada em [${nomeAlvo}], causando 1 de dano direto!`);
         
@@ -1292,7 +1301,7 @@ function equiparSuporte(idAlvo) {
         suportePreparado = null;
     }
 
-    // --- REGRA DA RECUPERIDA ---
+   // --- REGRA DA RECUPERIDA ---
     if (suportePreparado === 'Recuperida') {
         let itemNaMao = document.getElementById("pacote-" + idItemNaMao);
         if (!itemNaMao) return;
@@ -1302,21 +1311,24 @@ function equiparSuporte(idAlvo) {
         let alvoNoCampo2 = pacoteAlvo.closest("#campo-j2") !== null;
         
         if ((quemJogou.includes("j1") && !alvoNoCampo1) || (quemJogou.includes("j2") && !alvoNoCampo2)) {
-            return narrar("❌ Alvo inválido! A poção Recuperida só pode ser usada em cartas ALIADAS. Escolha outra carta.");
+            return narrar("❌ Alvo inválido! A poção Recuperida só pode ser usada em cartas ALIADAS.");
         }
-
-        let vidaElemento = document.getElementById("vida-" + idAlvo);
-        if (vidaElemento) {
-            let vidaAtual = parseInt(vidaElemento.innerText);
-            let novaVida = vidaAtual + 1; 
+        
+        itemNaMao.remove();
+        
+        let txtVida = document.getElementById("vida-" + idAlvo);
+        if (txtVida) {
+            let vidaAtual = parseFloat(txtVida.innerText);
+            txtVida.innerText = vidaAtual + 1;
             
-            vidaElemento.innerText = novaVida;
-            narrar(`💚 Recuperida ativada! [${nomeAlvo}] ganhou +1 de vida! (Vida Atual: ${novaVida})`);
+            // 🚨 EFEITO DE VIDA AQUI: Sobe 1 coração para indicar a cura da poção!
+            // (Se quiser que subam 3 corações, é só trocar "ganhou" por "recuperou")
+            mostrarEfeitoVida(idAlvo, "ganhou");
             
-            itemNaMao.remove();
-            suportePreparado = null;
+            narrar(`🧪 Glup glup! A poção Recuperida curou 1 de vida de [${nomeAlvo}]!`);
         }
-    } 
+        suportePreparado = null;
+    }
 
     // --- REGRA DA TRAIÇÃO (PASSO 1: Escolher o Traidor) ---
     if (suportePreparado === 'Traicao') {
@@ -1519,6 +1531,124 @@ function gerarPocaoAleatoria(idMao) {
         }
     } else {
         narrar("Erro crítico: Nenhuma poção foi encontrada no banco de dados!");
+    }
+}
+function mostrarEfeitoVida(idCarta, tipo) {
+    // Busca a carta na tela. Tenta procurar pelo "pacote-id", se não achar, tenta só pelo "id" direto.
+    let carta = document.getElementById("pacote-" + idCarta) || document.getElementById(idCarta);
+    
+    if (!carta) return; // Se a carta não estiver visível (ex: já morreu), aborta o efeito
+
+    // Função interna que cria um único coração
+    function gerarCoracao(atraso) {
+        let coracao = document.createElement("div");
+        coracao.innerText = "❤️";
+        coracao.classList.add("efeito-coracao");
+        
+        // Joga um pouquinho para a esquerda ou direita aleatoriamente (entre 15% e 35% da carta)
+        // Isso faz o coração nascer mais ou menos em cima do ícone da vida, e não no meio da carta.
+        let posicaoX = Math.random() * 20 + 15;
+        coracao.style.left = posicaoX + "%";
+        
+        // Define se ele espera um pouquinho antes de subir (para o efeito de "recuperou" vida)
+        coracao.style.animationDelay = atraso + "s";
+
+        carta.appendChild(coracao);
+
+        // O coração se auto-destrói do HTML após a animação acabar (1.2s de animação + o atraso)
+        setTimeout(() => {
+            if (coracao.parentNode) {
+                coracao.remove();
+            }
+        }, 1200 + (atraso * 1000));
+    }
+
+    // Aplica o efeito baseado no que você pediu:
+    if (tipo === "ganhou") {
+        // Sobe 1 coração imediato
+        gerarCoracao(0);
+        
+    } else if (tipo === "recuperou") {
+        // Sobe 3 corações em cascata (um após o outro)
+        gerarCoracao(0);
+        gerarCoracao(0.2);
+        gerarCoracao(0.4);
+    }
+}
+function mostrarEfeitoPerdaVida(idCarta) {
+    let carta = document.getElementById("pacote-" + idCarta) || document.getElementById(idCarta);
+    if (!carta) return;
+
+    let coracao = document.createElement("div");
+    coracao.innerText = "🖤"; // Você pode trocar por "🖤" se preferir!
+    coracao.classList.add("efeito-perda-vida");
+    
+    // Posição aleatória perto do centro-esquerda
+    let posicaoX = Math.random() * 20 + 15;
+    coracao.style.left = posicaoX + "%";
+
+    carta.appendChild(coracao);
+
+    // Auto-destrói após 1.2 segundos
+    setTimeout(() => {
+        if (coracao.parentNode) {
+            coracao.remove();
+        }
+    }, 1200);
+}
+function mostrarEfeitoAtaque(idCarta) {
+    let carta = document.getElementById("pacote-" + idCarta) || document.getElementById(idCarta);
+    if (!carta) return;
+
+    let espada = document.createElement("div");
+    espada.innerText = "⚔️"; 
+    espada.classList.add("efeito-ataque");
+    
+    // 🚨 Diferença: Joga mais para a DIREITA (entre 65% e 85%), onde fica o status de ataque!
+    let posicaoX = Math.random() * 20 + 65; 
+    espada.style.left = posicaoX + "%";
+
+    carta.appendChild(espada);
+
+    // Auto-destrói após 1.2 segundos
+    setTimeout(() => {
+        if (espada.parentNode) {
+            espada.remove();
+        }
+    }, 1200);
+}
+function mostrarEfeitoPerdaAtaque(idCarta) {
+    let carta = document.getElementById("pacote-" + idCarta) || document.getElementById(idCarta);
+    if (!carta) return;
+
+    let espada = document.createElement("div");
+    espada.innerText = "⚔️"; 
+    espada.classList.add("efeito-perda-ataque");
+    
+    // Fica do lado DIREITO, na direção do ícone de ataque
+    let posicaoX = Math.random() * 20 + 65;
+    espada.style.left = posicaoX + "%";
+
+    carta.appendChild(espada);
+
+    // Auto-destrói
+    setTimeout(() => {
+        if (espada.parentNode) {
+            espada.remove();
+        }
+    }, 1200);
+}
+function adicionarEfeitoBarril(idCarta) {
+    let carta = document.getElementById("pacote-" + idCarta) || document.getElementById(idCarta);
+    if (carta) {
+        carta.classList.add("efeito-barril-veneno");
+    }
+}
+
+function removerEfeitoBarril(idCarta) {
+    let carta = document.getElementById("pacote-" + idCarta) || document.getElementById(idCarta);
+    if (carta) {
+        carta.classList.remove("efeito-barril-veneno");
     }
 }
 

@@ -281,3 +281,121 @@ button:active {
     max-width: 1000px;
     flex-wrap: wrap; /* Caso a tela seja pequena, um botão desce pro outro lado */
 }
+/* ==========================================================================
+   EFEITOS VISUAIS (VFX) - STATUS
+   ========================================================================== */
+.efeito-coracao {
+    position: absolute;
+    bottom: 25px; /* Começa na parte de baixo da carta, perto do ícone de vida */
+    font-size: 1.5rem;
+    pointer-events: none; /* Garante que o jogador ainda consiga clicar na carta através do coração */
+    z-index: 100;
+    animation: flutuarCoracao 1.2s ease-out forwards;
+    filter: drop-shadow(0px 0px 4px rgba(255, 0, 0, 0.8)); /* Brilho vermelho */
+}
+
+/* A animação: começa pequeno, sobe crescendo, e some no alto */
+@keyframes flutuarCoracao {
+    0% {
+        transform: translateY(0) scale(0.5);
+        opacity: 0;
+    }
+    20% {
+        opacity: 1;
+    }
+    50% {
+        transform: translateY(-40px) scale(1.2);
+    }
+    100% {
+        transform: translateY(-80px) scale(0.8);
+        opacity: 0;
+    }
+}
+/* ==========================================================================
+   VFX - PERDA DE VIDA DIRETA (ROUBO/DRENO)
+   ========================================================================== */
+.efeito-perda-vida {
+    position: absolute;
+    bottom: 25px;
+    font-size: 1.5rem;
+    pointer-events: none;
+    z-index: 100;
+    /* Usa a nova animação de cair */
+    animation: cairCoracao 1.2s ease-in forwards; 
+    filter: drop-shadow(0px 0px 4px rgba(0, 0, 0, 0.8)); /* Brilho escuro */
+}
+
+/* A animação: dá um pulinho rápido e cai desaparecendo */
+@keyframes cairCoracao {
+    0% {
+        transform: translateY(0) scale(0.8);
+        opacity: 0;
+    }
+    20% {
+        opacity: 1;
+        transform: translateY(-10px) scale(1.2); /* Pulinho pra chamar atenção */
+    }
+    100% {
+        transform: translateY(40px) scale(0.5); /* Cai pra baixo da carta */
+        opacity: 0;
+    }
+}
+/* ==========================================================================
+   VFX - GANHO DE ATAQUE
+   ========================================================================== */
+.efeito-ataque {
+    position: absolute;
+    bottom: 25px; /* Perto do ícone de status */
+    font-size: 1.5rem;
+    pointer-events: none;
+    z-index: 100;
+    /* Usa uma animação igual a da vida, mas podemos criar uma se preferir */
+    animation: flutuarEspada 1.2s ease-out forwards;
+    /* Brilho usando a sua cor de ataque azulada */
+    filter: drop-shadow(0px 0px 4px rgba(74, 144, 226, 0.9)); 
+}
+
+@keyframes flutuarEspada {
+    0% {
+        transform: translateY(0) scale(0.5);
+        opacity: 0;
+    }
+    20% {
+        opacity: 1;
+    }
+    50% {
+        transform: translateY(-40px) scale(1.2);
+    }
+    100% {
+        transform: translateY(-80px) scale(0.8);
+        opacity: 0;
+    }
+}
+/* ==========================================================================
+   VFX - PERDA DE ATAQUE (ROUBO)
+   ========================================================================== */
+.efeito-perda-ataque {
+    position: absolute;
+    bottom: 25px; /* Começa perto do status de ataque */
+    font-size: 1.5rem;
+    pointer-events: none;
+    z-index: 100;
+    /* Usa a mesma lógica de animação do coração caindo */
+    animation: cairEspada 1.2s ease-in forwards; 
+    filter: drop-shadow(0px 0px 4px rgba(0, 0, 0, 0.8)); /* Sombra escura de "enfraquecimento" */
+}
+
+@keyframes cairEspada {
+    0% {
+        transform: translateY(0) scale(0.8);
+        opacity: 0;
+    }
+    20% {
+        opacity: 1;
+        transform: translateY(-10px) scale(1.2) rotate(-15deg); /* Pulinho torto pra dar um charme */
+    }
+    100% {
+        transform: translateY(40px) scale(0.5) rotate(15deg); /* Cai rodando um pouco */
+        opacity: 0;
+    }
+}

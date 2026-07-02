@@ -34,11 +34,18 @@ function aplicarCuraAliada(idDoPacote) {
     let novaVida = Math.min(maxVida, vidaAtual + valorCura);
     txtVida.innerText = novaVida;
 
+    // 🚨 EFEITO DE VIDA AQUI: Como foi uma cura, usamos "recuperou" (sobe 3 corações)
+    mostrarEfeitoVida(idPuro, "recuperou");
+
     let msgBuff = "";
     if (buffCuraCurandeiro > 0) {
         let txtDano = document.getElementById("dano-" + idPuro);
         let danoAtual = parseFloat(txtDano.innerText);
         txtDano.innerText = danoAtual + buffCuraCurandeiro;
+
+        // 🚨 EFEITO AQUI: Sobe a espadinha!
+        mostrarEfeitoAtaque(idPuro);
+
         msgBuff = ` e recebeu +${buffCuraCurandeiro} de ataque permanentemente!`;
         buffCuraCurandeiro = 0; 
     }
@@ -73,11 +80,18 @@ function aplicarCuraInimiga(idDoPacote) {
     let novaVida = Math.min(maxVida, vidaAtual + valorCura);
     txtVida.innerText = novaVida;
 
+    // 🚨 EFEITO DE VIDA AQUI: Como foi uma cura, usamos "recuperou" (sobe 3 corações)
+    mostrarEfeitoVida(idPuro, "recuperou");
+
     let msgBuff = "";
     if (buffCuraCurandeiroInimigo > 0) {
         let txtDano = document.getElementById("dano-" + idPuro);
         let danoAtual = parseFloat(txtDano.innerText);
         txtDano.innerText = danoAtual + buffCuraCurandeiroInimigo;
+
+        // 🚨 EFEITO AQUI: Sobe a espadinha!
+        mostrarEfeitoAtaque(idPuro);
+
         msgBuff = ` e recebeu +${buffCuraCurandeiroInimigo} de ataque permanentemente!`;
         buffCuraCurandeiroInimigo = 0; 
     }
@@ -378,6 +392,10 @@ function usarHabilidade(nome, idUnico, botao) {
                 let elemDano = document.getElementById("dano-" + idUnico);
                 let danoAtual = parseInt(elemDano.innerText);
                 elemDano.innerText = danoAtual + 1;
+
+                // 🚨 EFEITO AQUI: Sobe a espadinha!
+mostrarEfeitoAtaque(idUnico);
+
                 narrar(`🎯 Dado bônus do ${nome} tirou 3! Ganhou +1 de Dano permanentemente!`);
             } else {
                 narrar(`🎲 Dado bônus do ${nome} tirou ${dadoBonus}. Sem bônus de dano extra.`);
@@ -575,6 +593,9 @@ function aplicarRouboPrejuizo(idPacoteAlvo) {
         let txtVida = document.getElementById("vida-" + idPuro);
         let vidaAtual = parseFloat(txtVida.innerText);
         txtVida.innerText = vidaAtual - 1;
+
+        // 🚨 NOVO EFEITO AQUI: Coração partido caindo da carta alvo!
+        mostrarEfeitoPerdaVida(idPuro);
         
         narrar("💰 Alvo surrupiado! Agora clique em uma carta SUA na arena para entregar +1 de VIDA.");
         
@@ -593,6 +614,10 @@ function aplicarRouboPrejuizo(idPacoteAlvo) {
         let txtDano = document.getElementById("dano-" + idPuro);
         let danoAtual = parseFloat(txtDano.innerText);
         txtDano.innerText = Math.max(0, danoAtual - 1); 
+
+        // 🚨 EFEITO AQUI: A espada cai na carta que sofreu o roubo!
+        mostrarEfeitoPerdaAtaque(idPuro);
+
         narrar("💰 Alvo surrupiado! Agora clique em uma carta SUA na arena para entregar +1 de DANO.");
     }
     
@@ -609,11 +634,19 @@ function aplicarRouboBeneficio(idPacoteAliado) {
         let txtVida = document.getElementById("vida-" + idPuro);
         let vidaAtual = parseFloat(txtVida.innerText);
         txtVida.innerText = vidaAtual + 1;
+
+// 🚨 EFEITO DE VIDA AQUI: Sobe 1 coração só, pois ganhou pouca vida
+        mostrarEfeitoVida(idPuro, "ganhou");
+
         narrar(`💰 Sucesso total! +1 de VIDA transferido para ${nomeCarta}. Agora você pode Atacar ou Curar!`);
     } else if (tipoRouboLadrao === "dano") {
         let txtDano = document.getElementById("dano-" + idPuro);
         let danoAtual = parseFloat(txtDano.innerText);
         txtDano.innerText = danoAtual + 1;
+
+        // 🚨 EFEITO AQUI: Sobe a espadinha!
+    mostrarEfeitoAtaque(idPuro);
+
         narrar(`💰 Sucesso total! +1 de DANO transferido para ${nomeCarta}. Agora você pode Atacar ou Curar!`);
     }
 
@@ -634,12 +667,17 @@ function aplicarRouboDanoGoblin(idPacoteAlvo) {
     if (danoAtualAlvo > 0) {
         // 1. Tira 1 de dano do alvo clicado
         txtDanoAlvo.innerText = danoAtualAlvo - 1;
+
+        // 🚨 EFEITO AQUI: O alvo perdeu o dano, a espada cai dele!
+        mostrarEfeitoPerdaAtaque(idPuroAlvo);
         
         // 2. Entrega 1 de dano para o Goblin que ativou o poder
         let txtDanoGoblin = document.getElementById("dano-" + idGoblinLadrao);
         if (txtDanoGoblin) {
             txtDanoGoblin.innerText = parseFloat(txtDanoGoblin.innerText) + 1;
         }
+// 🚨 EFEITO AQUI: Sobe a espadinha!
+mostrarEfeitoAtaque(idGoblinLadrao);
 
         narrar("💰 Roubo concluído! O Goblin roubou 1 de dano do alvo!");
     } else {
