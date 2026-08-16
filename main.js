@@ -2,6 +2,9 @@ let deckJ1 = []; let maoJ1 = [];
 let deckJ2 = []; let maoJ2 = [];
 let turnoAtivo = 1; 
 let jogoIniciado = false;
+let faseAbertura = false;      // 🆕 fase de jogada simultânea antes do 1º turno
+let aberturaEscolhaJ1 = null;  // 🆕 id da carta que o jogador escolheu pra abertura
+let aberturaEscolhaJ2 = null;  // 🆕 id da carta que o oponente escolheu pra abertura
 let ultimaCartaOponente = null; 
 let ultimaCartaJogador = null;  
 let ctrlV = {}; 
@@ -11,6 +14,10 @@ let goblinAtaquesGanhos = {};      // Guarda quais Goblins específicos ganharam
 let ultimoIdQueAtacou = null;      // Guarda o ID da última carta que desferiu um ataque
 let suportePreparado = null; // Guarda o nome da arma engatilhada
 let idItemNaMao = null;      // Guarda o ID da carta na mão para destruí-la depois
+let modoAtaque = false;      // 🩹 CORREÇÃO: faltava declarar (causava ReferenceError antes do 1º passarTurno)
+let danoPreparado = 0;       // 🩹 CORREÇÃO: idem
+let modoAtaqueInimigo = false; // 🩹 CORREÇÃO: idem
+let danoInimigoPreparado = 0;  // 🩹 CORREÇÃO: idem
 let modoRouboGoblin = false;
 let idGoblinLadrao = null;
 let bloqueioNecro = {}; // Guarda as cartas do Necromante e quantos turnos faltam para liberar
@@ -36,6 +43,9 @@ let idBruxoAtivo = null;
 let modoGeloSimples = false;
 let idPocaoAtiva = null; 
 let duracaoGelo = {}; // ⏳ CRUCIAL: Guarda quem está congelado e por quantos turnos
+let alvosDoBumerangue = {}; // Guarda a lista de quem o bumerangue bateu: { idBume: ['alvo1', 'alvo2'] }
+let tabelaDanoBumerangue = [1, 2, 4, 4, 4, 4, 4, 4, 4, 4]; // A escala de dano progressivo
+let cartasCongeladas = {}; // Registra quais cartas estão sob o efeito de gelo do bumerangue
 
 // 🚨 NOVIDADE: A lista de suportes/poções agora fica no topo do código!
 let suportesReais = [
@@ -120,6 +130,70 @@ function iniciarJogo() {
     maoJ2.forEach(cartaComprada => {
         divMaoJ2.innerHTML += criarHTMLCarta(cartaComprada, "jogarCartaInimigo", "carta-inimiga-espera", false);
     });
+
+    // 🆕 FASE DE ABERTURA: antes do primeiro turno normal, cada lado escolhe 1 carta
+    // (uma TROPA) da própria mão. As duas são reveladas e postas em campo ao mesmo tempo.
+    faseAbertura = true;
+    aberturaEscolhaJ1 = null;
+    aberturaEscolhaJ2 = null;
+    document.getElementById("texto-turno").innerText = "Fase de Abertura";
+    document.getElementById("painel-narrador").innerText = "⚔️ Escolha 1 TROPA da sua mão pra abrir o jogo. As duas cartas serão reveladas juntas!";
+    let btnDado = document.getElementById("btn-rolar-dado");
+    if (btnDado) btnDado.style.display = "none";
+
+    if (typeof window.onFaseAberturaPronta === "function") window.onFaseAberturaPronta();
+}
+
+// 🆕 Registra a escolha de abertura de um jogador (1 = você, 2 = oponente) e revela
+// as duas ao mesmo tempo assim que ambas estiverem prontas.
+function escolherCartaAbertura(idDoPacote, jogador) {
+    let pacoteCarta = document.getElementById(idDoPacote);
+    if (!pacoteCarta) return;
+
+    let idSemPacote = idDoPacote.replace("pacote-", "");
+    let idBase = idSemPacote.split("_")[0];
+    let infoCarta = bancoDeCartas.find(c => c.id === idBase);
+    let ehSuporte = infoCarta && suportesReais.includes(infoCarta.id);
+    if (ehSuporte) {
+        return narrar("❌ A carta de abertura precisa ser uma TROPA — suportes/poções não podem abrir o jogo.");
+    }
+
+    if (jogador === 1) {
+        if (aberturaEscolhaJ1 !== null) return narrar("⏳ Você já escolheu! Aguardando o oponente...");
+        aberturaEscolhaJ1 = idDoPacote;
+        pacoteCarta.classList.add("carta-selecionada-abertura");
+        narrar(aberturaEscolhaJ2 === null ? "✅ Você escolheu! Aguardando o oponente escolher a dele..." : "⚔️ Revelando as cartas de abertura!");
+    } else {
+        if (aberturaEscolhaJ2 !== null) return;
+        aberturaEscolhaJ2 = idDoPacote;
+        pacoteCarta.classList.add("carta-selecionada-abertura");
+        narrar(aberturaEscolhaJ1 === null ? "✅ O oponente escolheu! Aguardando você escolher a sua..." : "⚔️ Revelando as cartas de abertura!");
+    }
+
+    tentarRevelarAbertura();
+}
+
+function tentarRevelarAbertura() {
+    if (aberturaEscolhaJ1 === null || aberturaEscolhaJ2 === null) return;
+
+    let escolhaJ1 = aberturaEscolhaJ1;
+    let escolhaJ2 = aberturaEscolhaJ2;
+    aberturaEscolhaJ1 = null;
+    aberturaEscolhaJ2 = null;
+    faseAbertura = false; // libera jogarCarta/jogarCartaInimigo pra fazerem o deploy de verdade
+
+    let c1 = document.getElementById(escolhaJ1);
+    let c2 = document.getElementById(escolhaJ2);
+    if (c1) c1.classList.remove("carta-selecionada-abertura");
+    if (c2) c2.classList.remove("carta-selecionada-abertura");
+
+    narrar("⚔️ Ambas as cartas de abertura foram reveladas!");
+    jogarCarta(escolhaJ1);
+    jogarCartaInimigo(escolhaJ2);
+
+    let btnDado = document.getElementById("btn-rolar-dado");
+    if (btnDado) btnDado.style.display = "";
+    document.getElementById("texto-turno").innerText = "Role o dado pra ver quem começa!";
 }
 
 function rolarDado() {
@@ -129,6 +203,10 @@ function rolarDado() {
     
     dadoTela.style.animation = 'none';
     setTimeout(() => dadoTela.style.animation = '', 10);
+
+    if (faseAbertura === true) {
+        return narrar("⏳ Escolha sua carta de abertura primeiro!");
+    }
 
     if (!jogoIniciado) {
         let dadoJ1 = Math.floor(Math.random() * 6) + 1;
@@ -155,6 +233,25 @@ function rolarDado() {
         dadoTela.innerText = "🎲 " + resultado;
         painelNarrador.innerText = `O dado rolou um ${resultado}.`;
     }
+}
+
+// 🆕 Botão "Passar a Vez" — sempre disponível pra quem estiver com o turno,
+// mesmo que ainda tenha ataque possível. Limpa qualquer escolha de alvo pendente
+// pra garantir que o próximo turno não comece bugado.
+function passarVezManual() {
+    if (faseAbertura === true) return narrar("⏳ Escolha sua carta de abertura primeiro!");
+    if (!jogoIniciado) return narrar("⏳ Role o dado de iniciativa primeiro!");
+
+    suportePreparado = null;
+    modoTraicao = false;
+    modoGeloSimples = false;
+    if (typeof modoAlvoBarril !== "undefined") modoAlvoBarril = false;
+    if (typeof modoAlvoBarrilBarbaro !== "undefined") modoAlvoBarrilBarbaro = false;
+    if (typeof modoAlvoBarrilBarbaroInimigo !== "undefined") modoAlvoBarrilBarbaroInimigo = false;
+    modoAtaque = false;
+    modoAtaqueInimigo = false;
+
+    passarTurno();
 }
 
 function passarTurno() {
@@ -239,13 +336,15 @@ function passarTurno() {
         });
     }
 
-    // 5. ⏳ LIMPEZA DE FADIGA DO NECROMANTE (Duração de 1 Rodada)
+    // 5. ⏳ LIMPEZA DE FADIGA DO NECROMANTE (Duração de 1 Rodada = 2 trocas de turno)
+    // 🩹 CORREÇÃO: antes tentava adivinhar o lado da carta pelo ID conter "inimigo",
+    // mas os tokens do Necromante (ex: "necro_xxxx") nunca têm essa palavra no nome,
+    // então os tokens do OPONENTE tinham a fadiga liberada cedo demais (quase na hora).
+    // Agora é um contador de verdade: desconta 1 a cada troca de turno, dos dois lados igual.
     if (typeof bloqueioNecro !== 'undefined') {
         for (let idCarta in bloqueioNecro) {
-            if (turnoAtivo === 1 && !idCarta.includes("inimigo")) {
-                delete bloqueioNecro[idCarta];
-            }
-            else if (turnoAtivo === 2 && idCarta.includes("inimigo")) {
+            bloqueioNecro[idCarta]--;
+            if (bloqueioNecro[idCarta] <= 0) {
                 delete bloqueioNecro[idCarta];
             }
         }
@@ -271,6 +370,7 @@ function passarTurno() {
 
                 if (pacote) {
                     pacote.classList.remove("congelada");
+                    pacote.style.filter = "none"; // 🚨 ADICIONAMOS ISSO AQUI: Remove a cor azul do Bumerskeleton!
                     narrar(`☀️ O gelo derreteu! ${nomeReal} se libertou!`);
                 }
                 delete duracaoGelo[idCarta]; 
@@ -293,6 +393,7 @@ function passarTurno() {
         }
     }
 }
+
 function verificarBloqueioTotalGelo(idJogador) {
     // idJogador deve ser "j1" ou "j2"
     let totalCartas = document.querySelectorAll(`#campo-${idJogador} [id^="pacote-"], #mao-${idJogador} [id^="pacote-"]`);
@@ -360,9 +461,8 @@ function invocarToken(idBaseCarta, idCampo) {
 
         // 🔮 3º PRIORIDADE: BRUXO (ROUBAR 6)
         else if (typeof modoBruxoRoubar !== 'undefined' && modoBruxoRoubar === true) {
-            let pacoteAlvo = document.getElementById(idDoPacote);
-            let campoAliado = document.getElementById("campo-j1");
-            campoAliado.appendChild(pacoteAlvo); // Rouba a carta
+            let idAlvo = idDoPacote.replace("pacote-", "");
+            converterCartaRoubada(idAlvo, true); // 🩹 rouba e garante que fica 100% sua (classe + ataque)
             
             let pacoteBruxo = document.getElementById("pacote-" + idBruxoAtivo);
             if (pacoteBruxo) pacoteBruxo.remove(); // Bruxo some
@@ -456,8 +556,45 @@ function invocarTokenPeloNomeSemHabilidade(nomeCarta, idCampo) {
     if (typeof atualizarTodosUnidoes === "function") atualizarTodosUnidoes();
 }
 
+// 🩹 CORREÇÃO: depois do Bruxo roubar uma carta, ela só era MOVIDA de lado (appendChild),
+// mas continuava com a classe CSS e o botão "Atacar" do dono ORIGINAL — por isso não dava
+// pra atacar com ela depois. Esta função reconstrói a cartinha do zero (preservando vida
+// e dano atuais) já com a classe, o botão de ataque e o clique de batalha do NOVO dono.
+function converterCartaRoubada(idUnico, novoDonoEhJ1) {
+    let pacoteAtual = document.getElementById("pacote-" + idUnico);
+    if (!pacoteAtual) return;
+
+    let nome = pacoteAtual.querySelector(".nome-carta").innerText.trim();
+    let imgSrc = pacoteAtual.querySelector("img").getAttribute("src");
+    let vidaEl = document.getElementById("vida-" + idUnico);
+    let danoEl = document.getElementById("dano-" + idUnico);
+    let vidaAtual = vidaEl ? vidaEl.innerText : "0";
+    let danoAtual = danoEl ? danoEl.innerText : "0";
+    let estavaCongelada = pacoteAtual.classList.contains("congelada");
+
+    let cartaObj = { nome: nome, idUnico: idUnico, img: imgSrc, vida: vidaAtual, dano: danoAtual };
+    let classeCss = novoDonoEhJ1 ? "carta-aliada" : "carta-inimiga";
+    let funcaoJogar = novoDonoEhJ1 ? "jogarCarta" : "jogarCartaInimigo";
+    let html = criarHTMLCarta(cartaObj, funcaoJogar, classeCss, novoDonoEhJ1);
+
+    let temp = document.createElement("div");
+    temp.innerHTML = html.trim();
+    let novoElemento = temp.firstElementChild;
+
+    let campoDestino = document.getElementById(novoDonoEhJ1 ? "campo-j1" : "campo-j2");
+    campoDestino.appendChild(novoElemento);
+    pacoteAtual.remove();
+
+    if (estavaCongelada) novoElemento.classList.add("congelada");
+
+    // Faz a carta "entrar em modo de batalha" de verdade (ataque, traição, etc já funcionando)
+    if (novoDonoEhJ1) jogarCarta("pacote-" + idUnico);
+    else jogarCartaInimigo("pacote-" + idUnico);
+}
+
 function jogarCarta(idDoPacote) {
     if (typeof idDoPacote !== "string") return;
+    if (faseAbertura === true) return escolherCartaAbertura(idDoPacote, 1);
 
     let pacoteCarta = document.getElementById(idDoPacote);
     if (!pacoteCarta) return; 
@@ -536,8 +673,8 @@ imagem.onclick = function() {
             let campoDoDonoDoBruxo = oBruxoEAliado ? document.getElementById("campo-j1") : document.getElementById("campo-j2");
             let maoDoDonoDoBruxo = oBruxoEAliado ? "mao-j1" : "mao-j2";
 
-            // 1. ROUBA A CARTA: Move o alvo para o campo de quem usou o Bruxo
-            campoDoDonoDoBruxo.appendChild(pacoteAlvo);
+            // 1. ROUBA A CARTA: reconstrói no campo de quem usou o Bruxo, já 100% do novo dono
+            converterCartaRoubada(idDoPacote.replace("pacote-", ""), oBruxoEAliado);
             
             // 2. O BRUXO VIRA POÇÃO: Remove o Bruxo do campo
             pacoteBruxo.remove(); 
@@ -557,23 +694,24 @@ imagem.onclick = function() {
             idBarrilProtetor = null;
             narrar("🛡️ Vínculo criado! O Barril agora dará a vida para proteger esta carta!");
             return;
-
-                if (campoInimigo) Array.from(campoInimigo.children).forEach(aplicarGelo);
-                if (maoInimiga) Array.from(maoInimiga.children).forEach(aplicarGelo);
-
-                pacotePocao.remove();
-                idPocaoAtiva = null;
-                
-            }
+        }
             // ❄️ POÇÃO DE GELO (ALVO SIMPLES - SEU LADO CLICANDO)
         if (typeof modoGeloSimples !== 'undefined' && modoGeloSimples === true) {
             let pacoteAlvo = document.getElementById(idDoPacote);
+            let pacotePocao = document.getElementById("pacote-" + idPocaoAtiva);
+            let quemJogouGelo = pacotePocao && pacotePocao.parentElement ? pacotePocao.parentElement.id : "";
+            let alvoEhJ1 = pacoteAlvo.closest("#campo-j1") !== null || pacoteAlvo.closest("#mao-j1") !== null;
+            let alvoEhJ2 = pacoteAlvo.closest("#campo-j2") !== null || pacoteAlvo.closest("#mao-j2") !== null;
+
+            if ((quemJogouGelo.includes("j1") && alvoEhJ1) || (quemJogouGelo.includes("j2") && alvoEhJ2)) {
+                return narrar("❌ Alvo inválido! A Poção de Gelo só pode ser usada em cartas do OPONENTE.");
+            }
+
             pacoteAlvo.classList.add("congelada");
 
             let idAlvo = idDoPacote.replace("pacote-", "");
             duracaoGelo[idAlvo] = 3; // 3 turnos = 1 rodada completa
 
-            let pacotePocao = document.getElementById("pacote-" + idPocaoAtiva);
             if (pacotePocao) pacotePocao.remove();
 
             modoGeloSimples = false;
@@ -608,6 +746,7 @@ imagem.onclick = function() {
 
 function jogarCartaInimigo(idDoPacote) {
     if (typeof idDoPacote !== "string") return;
+    if (faseAbertura === true) return escolherCartaAbertura(idDoPacote, 2);
 
     let pacoteCarta = document.getElementById(idDoPacote);
     if (!pacoteCarta) return;
@@ -655,12 +794,20 @@ function jogarCartaInimigo(idDoPacote) {
         // ❄️ POÇÃO DE GELO (ALVO SIMPLES - SEU LADO CLICANDO NO INIMIGO)
         if (typeof modoGeloSimples !== 'undefined' && modoGeloSimples === true) {
             let pacoteAlvo = document.getElementById(idDoPacote);
+            let pacotePocao = document.getElementById("pacote-" + idPocaoAtiva);
+            let quemJogouGelo = pacotePocao && pacotePocao.parentElement ? pacotePocao.parentElement.id : "";
+            let alvoEhJ1 = pacoteAlvo.closest("#campo-j1") !== null || pacoteAlvo.closest("#mao-j1") !== null;
+            let alvoEhJ2 = pacoteAlvo.closest("#campo-j2") !== null || pacoteAlvo.closest("#mao-j2") !== null;
+
+            if ((quemJogouGelo.includes("j1") && alvoEhJ1) || (quemJogouGelo.includes("j2") && alvoEhJ2)) {
+                return narrar("❌ Alvo inválido! A Poção de Gelo só pode ser usada em cartas do OPONENTE.");
+            }
+
             pacoteAlvo.classList.add("congelada");
 
             let idAlvo = idDoPacote.replace("pacote-", "");
             duracaoGelo[idAlvo] = 3; // 3 turnos = 1 rodada completa
 
-            let pacotePocao = document.getElementById("pacote-" + idPocaoAtiva);
             if (pacotePocao) pacotePocao.remove();
 
             modoGeloSimples = false;
@@ -668,7 +815,7 @@ function jogarCartaInimigo(idDoPacote) {
             narrar("❄️ Inimigo atingido e congelado por 2 rodadas!");
             return;
         }
-        if (modoTraicao === true) executarTraicao(idDoPacote);
+        if (modoTraicao === true) { executarTraicao(idDoPacote); return; }
         else if (modoLadrao === true && turnoAtivo === 1 && faseLadrao === 1) aplicarRouboPrejuizo(idDoPacote);
         else if (modoLadrao === true && turnoAtivo === 2 && faseLadrao === 2) aplicarRouboBeneficio(idDoPacote);
         else if (modoCuraInimigo === true) aplicarCuraInimiga(idDoPacote);
@@ -676,7 +823,7 @@ function jogarCartaInimigo(idDoPacote) {
         else if (modoRouboGoblin === true) aplicarRouboDanoGoblin(idDoPacote); 
         else if (modoAlvoBarril === true) aplicarAlvoBarril(idDoPacote);
         // 🧪 BRUXO (TRANSFORMAR 4)
-        if (typeof modoBruxoTransformar !== 'undefined' && modoBruxoTransformar === true) {
+        else if (typeof modoBruxoTransformar !== 'undefined' && modoBruxoTransformar === true) {
             let pacoteAlvo = document.getElementById(idDoPacote);
             let oBruxoEAliado = document.getElementById("pacote-" + idBruxoAtivo).closest("#campo-j1") !== null;
             let maoDoDonoDoBruxo = oBruxoEAliado ? "mao-j1" : "mao-j2";
@@ -691,7 +838,7 @@ function jogarCartaInimigo(idDoPacote) {
         }
 
         // 🔮 BRUXO (ROUBAR 6)
-        if (typeof modoBruxoRoubar !== 'undefined' && modoBruxoRoubar === true) {
+        else if (typeof modoBruxoRoubar !== 'undefined' && modoBruxoRoubar === true) {
             let pacoteAlvo = document.getElementById(idDoPacote);
             let pacoteBruxo = document.getElementById("pacote-" + idBruxoAtivo);
 
@@ -701,7 +848,7 @@ function jogarCartaInimigo(idDoPacote) {
             let campoDoDonoDoBruxo = oBruxoEAliado ? document.getElementById("campo-j1") : document.getElementById("campo-j2");
             let maoDoDonoDoBruxo = oBruxoEAliado ? "mao-j1" : "mao-j2";
 
-            campoDoDonoDoBruxo.appendChild(pacoteAlvo); // Rouba a carta alvo
+            converterCartaRoubada(idDoPacote.replace("pacote-", ""), oBruxoEAliado); // rouba a carta, já 100% do novo dono
             pacoteBruxo.remove(); // Some com o bruxo
             gerarPocaoAleatoria(maoDoDonoDoBruxo); // Manda poção pra mão de quem roubou
 
@@ -733,9 +880,11 @@ function jogarCartaInimigo(idDoPacote) {
 }
 
 function criarHTMLCarta(carta, funcaoJogar, classeCss, ehAliado) {
-    let btnCura = (carta.nome === 'Curandeiro') ? `<button onclick="iniciarCura('${carta.idUnico}')" style="background-color: green; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Curar 💚</button>` : '';
-    let btnCuraInimigo = (carta.nome === 'Curandeiro') ? `<button onclick="iniciarCuraInimigo('${carta.idUnico}')" style="background-color: green; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Curar Oponente 💚</button>` : '';
-    let btnEspecial = (carta.nome === 'Poção de Gelo' ||carta.nome === 'Bruxo' || carta.nome === 'Necromante' || carta.nome === 'Ork' || carta.nome === 'Curandeiro' || carta.nome === 'Ctrl C' || carta.nome === 'Ctrl V' || carta.nome === 'Cavaleiro das Trevas' || carta.nome === 'Goblin' || carta.nome === 'Trio de Goblin' || carta.nome === 'Barril de Goblin' || carta.nome === 'Guerreiro' || carta.nome === 'Barril de Bárbaro' || carta.nome === 'Barril') ? `<button onclick="usarHabilidade('${carta.nome}', '${carta.idUnico}', this)" style="background-color: purple; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Especial 🔮</button>` : '';
+    // 🩹 CORREÇÃO: os dois botões apareciam em QUALQUER Curandeiro, dos dois lados — deixando
+    // curar o time errado sem querer. Agora só aparece o botão do lado certo da carta.
+    let btnCura = (carta.nome === 'Curandeiro' && ehAliado) ? `<button onclick="iniciarCura('${carta.idUnico}')" style="background-color: green; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Curar 💚</button>` : '';
+    let btnCuraInimigo = (carta.nome === 'Curandeiro' && !ehAliado) ? `<button onclick="iniciarCuraInimigo('${carta.idUnico}')" style="background-color: green; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Curar Oponente 💚</button>` : '';
+    let btnEspecial = (carta.nome === 'Poção de Gelo' ||carta.nome === 'Bruxo' || carta.nome === 'Necromante' || carta.nome === 'Ork' || carta.nome === 'Curandeiro' || carta.nome === 'Ctrl C' || carta.nome === 'Ctrl V' || carta.nome === 'Cavaleiro das Trevas' || carta.nome === 'Goblin' || carta.nome === 'Trio de Goblin' || carta.nome === 'Barril de Goblin' || carta.nome === 'Guerreiro' || carta.nome === 'Barril de Bárbaro' || carta.nome === 'Barril'|| carta.nome === 'Bumerskeleton' || carta.nome === 'Mensageiro') ? `<button onclick="usarHabilidade('${carta.nome}', '${carta.idUnico}', this)" style="background-color: purple; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Especial 🔮</button>` : '';
     let btnLadrao = (carta.nome === 'Ladrão') ? `<button onclick="usarPassivaLadrao('${carta.idUnico}', this)" style="background-color: #f1c40f; color: black; font-weight: bold; width: 100%; margin-bottom: 2px; cursor: pointer;">Passiva 💰</button>` : '';
     let btnCtrlC = (carta.nome === 'Ctrl C' || carta.nome === 'Ctrl V') ? `<button onclick="usarPassivaCtrlC('${carta.idUnico}', this)" style="background-color: #34495e; color: white; font-weight: bold; width: 100%; margin-bottom: 2px; cursor: pointer;">Passiva 📋</button>` : '';
 
@@ -781,6 +930,13 @@ function iniciarAtaque(nomeCarta, idUnico) {
     if (suportePreparado !== null) {
         equiparSuporte(idUnico);
         return; 
+    }
+
+    // 🩹 CORREÇÃO: se uma Traição está em andamento, o clique no botão Atacar
+    // deve escolher a VÍTIMA (parceira do traidor), não disparar um ataque normal!
+    if (modoTraicao === true) {
+        executarTraicao("pacote-" + idUnico);
+        return;
     }
 
     if (turnoAtivo !== 1) return narrar("Ainda não é o seu turno de atacar!");
@@ -838,6 +994,14 @@ function iniciarAtaque(nomeCarta, idUnico) {
         else if (dado >= 4 && dado <= 6) { danoPreparado += 3; narrar(`🎯 Arqueiro atirador de elite (${dado})! Dano +3 (Total: ${danoPreparado})!`); }
     }
 
+    if (nomeCarta === 'Mensageiro' && typeof mensageirosEmArea !== 'undefined' && mensageirosEmArea[idUnico]) {
+        narrar(`🌪️ O Mensageiro disparou em ÁREA! Causando 2 de dano a TODOS os inimigos!`);
+        inimigosNoCampo.forEach(pacoteInimigo => aplicarDanoDireto(pacoteInimigo.id, 2, false));
+        passarTurno();
+        if (typeof atualizarTodosUnidoes === "function") atualizarTodosUnidoes();
+        return; // Retorna para não continuar e pedir clique do mouse
+    }
+
     if (nomeCarta === 'Cavaleiro das Trevas') {
         let danoArea = 2; let alvosMaximos = 1;
         if (typeof cavaleiroAtivado !== 'undefined' && cavaleiroAtivado[idUnico]) { danoArea = 5; alvosMaximos = 3; } 
@@ -887,7 +1051,19 @@ function receberAtaque(idVidaAlvo, idPacoteAlvo) {
 
         let textoVida = document.getElementById(idVidaAlvo);
         let vidaAtual = parseInt(textoVida.innerText) - danoPreparado;
-        textoVida.innerText = vidaAtual; 
+        textoVida.innerText = vidaAtual;
+        
+        try {
+            if (ultimaCartaJogador && ultimaCartaJogador.nome === "Bumerskeleton") {
+                if (typeof executarChainBumerangue === "function") {
+                    executarChainBumerangue(ultimoIdQueAtacou, idPuro, "campo-j2");
+                } else {
+                    narrar("⚠️ A função do ricochete não foi encontrada!");
+                }
+            }
+        } catch (e) {
+            console.error("Erro ao ativar bumerangue: ", e);
+        }
 
         if (vidaAtual <= 0) {
             let nomeDestaCarta = pacoteAlvo.querySelector(".nome-carta").innerText;
@@ -953,6 +1129,12 @@ function inimigoAtacar(idUnico) {
         return;
     }
 
+    // 🩹 CORREÇÃO: idem para o botão Atacar do lado do oponente
+    if (modoTraicao === true) {
+        executarTraicao("pacote-" + idUnico);
+        return;
+    }
+
     if (turnoAtivo !== 2) return narrar("Ainda não é o turno do Oponente atacar!");
     let pacoteInimigo = document.getElementById("pacote-" + idUnico);
     let nomeCartaInimiga = pacoteInimigo.querySelector(".nome-carta").innerText;
@@ -1012,6 +1194,14 @@ function inimigoAtacar(idUnico) {
         if (dado >= 1 && dado <= 3) { danoInimigoPreparado += 1; } 
         else if (dado >= 4 && dado <= 6) { danoInimigoPreparado += 3; }
     }
+    
+    if (nomeCartaInimiga === 'Mensageiro' && typeof mensageirosEmArea !== 'undefined' && mensageirosEmArea[idUnico]) {
+        narrar(`🌪️ O Mensageiro Inimigo disparou em ÁREA! Causando 2 de dano a TODAS as suas cartas!`);
+        aliadosNoCampo.forEach(pacoteAliado => aplicarDanoDireto(pacoteAliado.id, 2, true));
+        passarTurno();
+        if (typeof atualizarTodosUnidoes === "function") atualizarTodosUnidoes();
+        return;
+    }
 
     if (nomeCartaInimiga === 'Cavaleiro das Trevas') {
         let danoArea = 2; let alvosMaximos = 1;
@@ -1064,6 +1254,17 @@ function aplicarDanoInimigo(idPacoteAlvo) {
     let textoVida = document.getElementById(idVida);
     let vidaAtual = parseFloat(textoVida.innerText) - danoInimigoPreparado;
     textoVida.innerText = vidaAtual;
+
+    // 🪃 COLOQUE ESTE BLOCO AQUI: Ricochete do Bumerskeleton do Inimigo
+    try {
+        if (ultimaCartaOponente && ultimaCartaOponente.nome === "Bumerskeleton") {
+            if (typeof executarChainBumerangue === "function") {
+                executarChainBumerangue(ultimoIdQueAtacou, idPuro, "campo-j1");
+            }
+        }
+    } catch (e) {
+        console.error("Erro ao ativar bumerangue oponente: ", e);
+    }
 
     if (vidaAtual <= 0) {
         let nomeDestaCarta = pacoteAlvo.querySelector(".nome-carta").innerText;
@@ -1136,7 +1337,9 @@ function atualizarUnidoesNoCampo(campoHTML) {
         let idUnico = pacote.id.replace("pacote-", "");
         let spanDano = document.getElementById("dano-" + idUnico);
         if (spanDano) {
-            let dano = parseInt(spanDano.innerText) || 0; // Garante que é número
+            // 🩹 CORREÇÃO: era parseInt, que truncava dano fracionário (ex: 2.5 virava 2) —
+            // o jogo tem várias cartas com dano quebrado (Curandeiro +0.5, Bumerskeleton -0.25...)
+            let dano = parseFloat(spanDano.innerText) || 0;
             if (dano > maiorDano) maiorDano = dano;
         }
     });
@@ -1171,12 +1374,16 @@ function aplicarDanoDireto(idPacoteAlvo, dano, isInimigo) {
         let pacote = document.getElementById(idPacoteAlvo);
         if (!pacote) return;
         let nomeDestaCarta = pacote.querySelector(".nome-carta").innerText;
+        // 🩹 CORREÇÃO: descobre o lado do Ork pela posição real dele no campo (igual já
+        // era feito certo no roubo do Ladrão), em vez de confiar no parâmetro "isInimigo" —
+        // ele não tem um significado consistente entre quem chama esta função, então usar
+        // ele pra decidir o lado dos Goblins invocados dava resultado errado às vezes.
+        let campoDestino = pacote.closest("#campo-j2") ? "campo-j2" : "campo-j1";
         pacote.remove();
         
         if (nomeDestaCarta === "Ork") {
             let qtd = orkBuffado[idPuro] ? 3 : 2;
             narrar(`💀 PASSIVA: O Ork morreu e invocou ${qtd} Goblins!`);
-            let campoDestino = isInimigo ? "campo-j1" : "campo-j2";
             for (let i = 0; i < qtd; i++) invocarToken("goblin", campoDestino);
         }
     }
@@ -1262,11 +1469,21 @@ function equiparSuporte(idAlvo) {
 
     // --- REGRA DA BESTA ---
     if (suportePreparado === 'Besta') {
+        let itemNaMaoBesta = document.getElementById("pacote-" + idItemNaMao);
+        if (!itemNaMaoBesta) return;
+
+        let quemJogouBesta = itemNaMaoBesta.parentElement ? itemNaMaoBesta.parentElement.id : "";
+        let alvoNoCampo1Besta = pacoteAlvo.closest("#campo-j1") !== null;
+        let alvoNoCampo2Besta = pacoteAlvo.closest("#campo-j2") !== null;
+
+        if ((quemJogouBesta.includes("j1") && !alvoNoCampo1Besta) || (quemJogouBesta.includes("j2") && !alvoNoCampo2Besta)) {
+            return narrar("❌ Alvo inválido! A Besta só pode ser equipada em cartas ALIADAS.");
+        }
+
         let bonus = (nomeAlvo === 'Arqueiro') ? 2 : 1;
         if (danoElemento) danoElemento.innerText = danoAtual + bonus;
         
-        let itemNaMao = document.getElementById("pacote-" + idItemNaMao);
-        if (itemNaMao) itemNaMao.remove();
+        itemNaMaoBesta.remove();
 
         // 🚨 EFEITO DE GANHO DE ATAQUE AQUI:
             mostrarEfeitoAtaque(idAlvo);
@@ -1277,10 +1494,20 @@ function equiparSuporte(idAlvo) {
 
     // --- REGRA DA VELUX ---
     if (suportePreparado === 'Velux') {
+        let itemNaMaoVelux = document.getElementById("pacote-" + idItemNaMao);
+        if (!itemNaMaoVelux) return;
+
+        let quemJogouVelux = itemNaMaoVelux.parentElement ? itemNaMaoVelux.parentElement.id : "";
+        let alvoNoCampo1Velux = pacoteAlvo.closest("#campo-j1") !== null;
+        let alvoNoCampo2Velux = pacoteAlvo.closest("#campo-j2") !== null;
+
+        if ((quemJogouVelux.includes("j1") && !alvoNoCampo1Velux) || (quemJogouVelux.includes("j2") && !alvoNoCampo2Velux)) {
+            return narrar("❌ Alvo inválido! A poção Velux só pode ser usada em cartas ALIADAS.");
+        }
+
         pocaoVeluxAtiva[idAlvo] = true;
         
-        let itemNaMao = document.getElementById("pacote-" + idItemNaMao);
-        if (itemNaMao) itemNaMao.remove();
+        itemNaMaoVelux.remove();
         
         narrar(`⚡ Poção Velux derramada sobre [${nomeAlvo}]! Segundo ataque liberado imediatamente!`);
         suportePreparado = null;
@@ -1288,11 +1515,22 @@ function equiparSuporte(idAlvo) {
 
     // --- REGRA DA ADIV ---
     if (suportePreparado === 'Adiv') {
-        let itemNaMao = document.getElementById("pacote-" + idItemNaMao);
-        if (itemNaMao) itemNaMao.remove();
+        let itemNaMaoAdiv = document.getElementById("pacote-" + idItemNaMao);
+        if (!itemNaMaoAdiv) return;
+
+        let quemJogouAdiv = itemNaMaoAdiv.parentElement ? itemNaMaoAdiv.parentElement.id : "";
+        let alvoNoCampo1Adiv = pacoteAlvo.closest("#campo-j1") !== null;
+        let alvoNoCampo2Adiv = pacoteAlvo.closest("#campo-j2") !== null;
+
+        // Ofensiva: só pode mirar no lado OPOSTO de quem jogou a poção
+        if ((quemJogouAdiv.includes("j1") && alvoNoCampo1Adiv) || (quemJogouAdiv.includes("j2") && alvoNoCampo2Adiv)) {
+            return narrar("❌ Alvo inválido! A poção Adiv só pode ser usada em cartas INIMIGAS.");
+        }
+
+        itemNaMaoAdiv.remove();
 
         // 🚨 NOVO EFEITO AQUI: Coração partido caindo da carta alvo!
-        mostrarEfeitoPerdaVida(idPuro);
+        mostrarEfeitoPerdaVida(idAlvo);
         
         narrar(`🧪 Splash! A poção Adiv foi atirada em [${nomeAlvo}], causando 1 de dano direto!`);
         
@@ -1533,6 +1771,62 @@ function gerarPocaoAleatoria(idMao) {
         narrar("Erro crítico: Nenhuma poção foi encontrada no banco de dados!");
     }
 }
+// ====== MOTOR DO BUMERANGUE ======
+function executarChainBumerangue(idBumerskeleton, idPrimeiroAlvo, campoAlvoId) {
+    try {
+        if (typeof alvosDoBumerangue === 'undefined') {
+            return narrar("⚠️ Erro: As variáveis do bumerangue estão faltando no topo do main.js!");
+        }
+        alvosDoBumerangue[idBumerskeleton] = [idPrimeiroAlvo];
+
+        let campo = document.getElementById(campoAlvoId);
+        if (!campo) return;
+
+        let classeCartas = (campoAlvoId === "campo-j2") ? "carta-inimiga" : "carta-aliada";
+        let outrasCartas = Array.from(campo.getElementsByClassName(classeCartas));
+
+        let delay = 600; 
+        let indexDano = 1; 
+
+        outrasCartas.forEach(pacote => {
+            let idOutroAlvo = pacote.id.replace("pacote-", "");
+
+            if (idOutroAlvo === idPrimeiroAlvo) return;
+
+            // Salva o dano para o ricochete
+            let danoDestaBatida = 3; 
+            if (typeof tabelaDanoBumerangue !== 'undefined') {
+                danoDestaBatida = tabelaDanoBumerangue[indexDano] || 12;
+            }
+
+            setTimeout(() => {
+                let txtVida = document.getElementById("vida-" + idOutroAlvo);
+                let nomeAlvo = pacote.querySelector(".nome-carta").innerText;
+                
+                if (txtVida) {
+                    let vidaAtual = parseFloat(txtVida.innerText);
+                    let novaVida = vidaAtual - danoDestaBatida;
+                    txtVida.innerText = novaVida;
+                    
+                    alvosDoBumerangue[idBumerskeleton].push(idOutroAlvo);
+
+                    if (typeof mostrarEfeitoPerdaVida === "function") mostrarEfeitoPerdaVida(idOutroAlvo);
+                    narrar(`🪃 O bumerangue ricocheteou em [${nomeAlvo}] e causou ${danoDestaBatida} de Dano!`);
+
+                    if (novaVida <= 0) {
+                        narrar(`BUM! [${nomeAlvo}] foi destruído pelo ricochete!`);
+                        pacote.remove();
+                    }
+                }
+            }, delay);
+            
+            delay += 600;
+            indexDano++;
+        });
+    } catch (erro) {
+        console.error("Erro no ricochete: ", erro);
+    }
+}
 function mostrarEfeitoVida(idCarta, tipo) {
     // Busca a carta na tela. Tenta procurar pelo "pacote-id", se não achar, tenta só pelo "id" direto.
     let carta = document.getElementById("pacote-" + idCarta) || document.getElementById(idCarta);
@@ -1637,19 +1931,6 @@ function mostrarEfeitoPerdaAtaque(idCarta) {
             espada.remove();
         }
     }, 1200);
-}
-function adicionarEfeitoBarril(idCarta) {
-    let carta = document.getElementById("pacote-" + idCarta) || document.getElementById(idCarta);
-    if (carta) {
-        carta.classList.add("efeito-barril-veneno");
-    }
-}
-
-function removerEfeitoBarril(idCarta) {
-    let carta = document.getElementById("pacote-" + idCarta) || document.getElementById(idCarta);
-    if (carta) {
-        carta.classList.remove("efeito-barril-veneno");
-    }
 }
 
 window.onload = function() {

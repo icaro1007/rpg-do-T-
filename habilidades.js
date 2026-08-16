@@ -11,6 +11,7 @@ let faseLadrao = 0;
 let tipoRouboLadrao = ""; 
 let ladroesQueJaRoubaram = {}; 
 let cavaleiroAtivado = {}; // Guarda quais Cavaleiros conseguiram o bônus permanente
+window.mensageirosEmArea = window.mensageirosEmArea || {};
 
 function iniciarCura(idUnicoCurandeiro) {
     modoCura = true;
@@ -104,7 +105,11 @@ function aplicarCuraInimiga(idDoPacote) {
     atualizarTodosUnidoes();
 }
 
-function usarHabilidade(nome, idUnico, botao) {
+function usarHabilidade(nome, idUnico, botao, aoConcluir) {
+    // 🆕 aoConcluir: callback opcional chamado com (sucesso: boolean) quando o resultado do
+    // dado desta habilidade for conhecido (pode ser na hora ou depois de um setTimeout).
+    // Usado pelo Ctrl C/V pra saber se a habilidade copiada deu certo antes de rolar o bônus.
+    let notificar = function (sucesso) { if (typeof aoConcluir === "function") aoConcluir(sucesso); };
     let dadoTela = document.getElementById("dado-tela");
 
     /// 🪵 HABILIDADE ESPECIAL: BARRIL DE BÁRBARO
@@ -122,6 +127,7 @@ function usarHabilidade(nome, idUnico, botao) {
         
         // Esconde o botão roxo após usar a habilidade única
         if (botao) botao.style.display = 'none';
+        notificar(dado === 5);
         return;
     }
     // 🛡️ HABILIDADE ESPECIAL: BARRIL (Criar Vínculo de Guarda-Costas)
@@ -139,6 +145,7 @@ function usarHabilidade(nome, idUnico, botao) {
         }
         
         if (botao) botao.style.display = 'none'; // Some com o botão após o uso
+        notificar(true); // não tem dado — sempre "ativa"
         return;
     }
     // 🧪 HABILIDADE ESPECIAL: BRUXO (Polimorfia e Controle Mental)
@@ -160,9 +167,11 @@ function usarHabilidade(nome, idUnico, botao) {
             if (dado === 4) {
                 modoBruxoTransformar = true;
                 narrar("🧪 O Bruxo tirou 4! Clique em uma carta INIMIGA para transformá-la em Poção!");
+                notificar(true);
             } else if (dado === 6) {
                 modoBruxoRoubar = true;
                 narrar("🔮 O Bruxo tirou 6! Clique em uma carta INIMIGA para ROUBÁ-LA!");
+                notificar(true);
             } else {
                 narrar(`🎲 O Bruxo rolou ${dado}. A magia falhou e ele virou poção!`);
                 
@@ -176,6 +185,7 @@ function usarHabilidade(nome, idUnico, botao) {
                 }
                 
                 idBruxoAtivo = null; // Reseta o uso
+                notificar(false);
             }
         }, 1000);
         
@@ -185,6 +195,7 @@ function usarHabilidade(nome, idUnico, botao) {
     let pacoteDono = document.getElementById("pacote-" + idUnico);
     if (pacoteDono && pacoteDono.classList.contains("congelada")) {
         narrar("❄️ Esta carta está congelada e não pode usar habilidades!");
+        notificar(false);
         return;
     }
 
@@ -228,26 +239,19 @@ function usarHabilidade(nome, idUnico, botao) {
                 narrar(`❄️ Sucesso! A nevasca congelou todas as ${cartasInimigas.length} carta(s) do oponente!`);
             }
             
-            let aplicarGelo = (carta) => {
-                carta.classList.add("congelada");
-                let idSemPacote = carta.id.replace("pacote-", "");
-                duracaoGelo[idSemPacote] = 3; // 3 turnos = 1 rodada completa
-            };
-
-            if (campoInimigo) Array.from(campoInimigo.children).forEach(aplicarGelo);
-            if (maoInimiga) Array.from(maoInimiga.children).forEach(aplicarGelo);
-
             if (pacotePocao) pacotePocao.remove();
             idPocaoAtiva = null;
             modoGeloSimples = false;
         } else {
             // Qualquer outro dado ativa o Alvo Simples
-            narrar("❄️ Gelo Simples ativado! Clique em qualquer carta (campo ou mão) para congelar.");
+            narrar("❄️ Gelo Simples ativado! Clique em uma carta do OPONENTE (campo ou mão) para congelar.");
             modoGeloSimples = true;
             idPocaoAtiva = idUnico;
         }
         
         if (typeof atualizarTodosUnidoes === "function") atualizarTodosUnidoes();
+        if (dado === 5) passarTurno(); // 🩹 CORREÇÃO: a nevasca é uma ação completa, precisa passar o turno
+        notificar(true); // Gelo sempre "funciona" de algum jeito (nevasca ou alvo simples)
         return;
     }
     if (nome === 'Necromante') {
@@ -302,8 +306,10 @@ function usarHabilidade(nome, idUnico, botao) {
             } else {
                 narrar(`🔮 SUCESSO! Dado: ${resultadoDado}. Porém as cartas invocadas já não estão na mão! Causou 1 de dano.`);
             }
+            notificar(true);
         } else {
             narrar(`❌ FALHOU! O dado deu ${resultadoDado}. As cartas continuam na mão.`);
+            notificar(false);
         }
         
         botao.style.display = "none"; 
@@ -326,43 +332,45 @@ function usarHabilidade(nome, idUnico, botao) {
         }
         
         botao.style.display = "none"; 
+        notificar(resultadoDado === 1);
         return; // SEM PASSAR O TURNO!
     }
     
     if (nome === 'Curandeiro') {
         let ehAliado = botao.closest('#campo-j1') || botao.closest('#mao-j1') || botao.closest('.carta-aliada');
         
-        let dado1 = Math.floor(Math.random() * 6) + 1;
-        let dado2 = Math.floor(Math.random() * 6) + 1;
+        // 🩹 CORREÇÃO: era 2 dados independentes (um pro +1 dano, outro pro bônus de cura),
+        // mas a carta descreve os dois efeitos como consequência do MESMO resultado —
+        // dava pra ganhar o bônus de cura sem ganhar o +1 de dano, o que não devia acontecer.
+        let dado = Math.floor(Math.random() * 6) + 1;
 
         dadoTela.style.animation = 'none';
         setTimeout(() => dadoTela.style.animation = '', 10);
-        dadoTela.innerText = `🎲 Dado 1: ${dado1} | Dado 2: ${dado2}`;
+        dadoTela.innerText = "🎲 " + dado;
 
-        let ehImpar = (dado1 % 2 !== 0);
-        let deuBuff = (dado2 === 1 || dado2 === 3);
+        let ehImpar = (dado % 2 !== 0);
+        let deuBuff = (dado === 1 || dado === 3);
 
         let msgDano = "";
         if (ehImpar) {
             let spanDano = document.getElementById("dano-" + idUnico);
             let danoAtual = parseFloat(spanDano.innerText);
             spanDano.innerText = danoAtual + 1;
-            msgDano = ehAliado ? "💥 Dado 1 ÍMPAR! Seu Curandeiro ganhou +1 de Ataque." : "💥 Dado 1 ÍMPAR! O Curandeiro Inimigo ganhou +1 de Ataque.";
+            msgDano = ehAliado ? "💥 Dado ÍMPAR! Seu Curandeiro ganhou +1 de Ataque." : "💥 Dado ÍMPAR! O Curandeiro Inimigo ganhou +1 de Ataque.";
         } else {
-            msgDano = "❌ Dado 1 foi PAR (Sem ganho de ataque).";
+            msgDano = "❌ Dado foi PAR (sem ganho de ataque, sem bônus de cura).";
         }
 
         let msgBuff = "";
         if (deuBuff) {
             if (ehAliado) buffCuraCurandeiro = 0.5;
             else buffCuraCurandeiroInimigo = 0.5;
-            msgBuff = "✨ Dado 2 foi 1 ou 3! A próxima cura dará +0.5 de bônus.";
-        } else {
-            msgBuff = "❌ Dado 2 não foi 1 nem 3.";
+            msgBuff = "✨ Dado foi 1 ou 3! A próxima cura dará +0.5 de bônus.";
         }
 
         narrar(`🔮 Habilidade Curandeiro: ${msgDano} ${msgBuff}`);
         botao.style.display = "none";
+        notificar(ehImpar);
         return; // SEM PASSAR O TURNO!
     }
 
@@ -376,31 +384,37 @@ function usarHabilidade(nome, idUnico, botao) {
         let nomeCopiado = dadosCopia.nomeOriginal;
         narrar(`🔮 O ${nome} ativou a habilidade copiada de [${nomeCopiado}]!`);
         
-        // Dispara a habilidade real que ele copiou
-        usarHabilidade(nomeCopiado, idUnico, botao);
-        
-        // Após 2.5 segundos, rola o dado extra da própria carta
-        setTimeout(() => {
-            let dadoBonus = Math.floor(Math.random() * 6) + 1;
-            let dadoTela = document.getElementById("dado-tela");
-            
-            dadoTela.style.animation = 'none';
-            setTimeout(() => dadoTela.style.animation = '', 10);
-            dadoTela.innerText = "🎲 " + dadoBonus;
-            
-            if (dadoBonus === 3) {
-                let elemDano = document.getElementById("dano-" + idUnico);
-                let danoAtual = parseInt(elemDano.innerText);
-                elemDano.innerText = danoAtual + 1;
-
-                // 🚨 EFEITO AQUI: Sobe a espadinha!
-mostrarEfeitoAtaque(idUnico);
-
-                narrar(`🎯 Dado bônus do ${nome} tirou 3! Ganhou +1 de Dano permanentemente!`);
-            } else {
-                narrar(`🎲 Dado bônus do ${nome} tirou ${dadoBonus}. Sem bônus de dano extra.`);
+        // 🩹 CORREÇÃO: o dado bônus (+1 dano no 3) só deveria rolar SE a habilidade copiada
+        // tiver dado certo — antes ele rolava sempre, mesmo quando a cópia falhava.
+        usarHabilidade(nomeCopiado, idUnico, botao, function (sucessoCopiado) {
+            if (!sucessoCopiado) {
+                narrar(`❌ A habilidade copiada de [${nomeCopiado}] não deu certo — sem chance de dado bônus desta vez.`);
+                return;
             }
-        }, 2500); 
+
+            // Depois de 1.5s (dá tempo de ler o resultado da habilidade copiada), rola o dado extra
+            setTimeout(() => {
+                let dadoBonus = Math.floor(Math.random() * 6) + 1;
+                let dadoTela = document.getElementById("dado-tela");
+                
+                dadoTela.style.animation = 'none';
+                setTimeout(() => dadoTela.style.animation = '', 10);
+                dadoTela.innerText = "🎲 " + dadoBonus;
+                
+                if (dadoBonus === 3) {
+                    let elemDano = document.getElementById("dano-" + idUnico);
+                    let danoAtual = parseInt(elemDano.innerText);
+                    elemDano.innerText = danoAtual + 1;
+
+                    // 🚨 EFEITO AQUI: Sobe a espadinha!
+                    mostrarEfeitoAtaque(idUnico);
+
+                    narrar(`🎯 A habilidade copiada deu certo, e o dado bônus do ${nome} tirou 3! Ganhou +1 de Dano permanentemente!`);
+                } else {
+                    narrar(`🎲 A habilidade copiada deu certo, mas o dado bônus do ${nome} tirou ${dadoBonus}. Sem bônus de dano extra.`);
+                }
+            }, 1500);
+        });
         
         return; // SEM PASSAR O TURNO!
     }
@@ -410,6 +424,7 @@ mostrarEfeitoAtaque(idUnico);
         let ehAliado = botao.closest(".carta-aliada") !== null;
         
         if (cavaleiroAtivado[idUnico]) {
+            notificar(false);
             return narrar("A habilidade deste Cavaleiro já está ativada com poder máximo!");
         }
         
@@ -431,6 +446,7 @@ mostrarEfeitoAtaque(idUnico);
             }
             
             if (typeof atualizarTodosUnidoes === "function") atualizarTodosUnidoes();
+            notificar(dado === 5);
         }, 1200);
         return; // SEM PASSAR O TURNO!
     }
@@ -439,6 +455,7 @@ mostrarEfeitoAtaque(idUnico);
     if (nome === "Trio de Goblin") {
         let vidaAtual = parseFloat(document.getElementById("vida-" + idUnico).innerText);
         if (vidaAtual > 2) {
+            notificar(false);
             return narrar("❌ O Trio de Goblin só pode usar a habilidade especial quando restar apenas 1 Goblin (2 ou menos de vida)!");
         } else {
             narrar("🔥 Restou apenas um! O último do Trio ativou a habilidade do Goblin!");
@@ -459,6 +476,7 @@ mostrarEfeitoAtaque(idUnico);
         }
 
         botao.style.display = "none";
+        notificar(dado === 1 || dado === 2);
         return; // Habilidade não passa o turno!
     }
     // --- HABILIDADE DO GUERREIRO ---
@@ -479,12 +497,13 @@ mostrarEfeitoAtaque(idUnico);
         
         // Bloqueia o botão para ser de Uso Único
         botao.style.display = "none";
+        notificar(dado >= 1 && dado <= 4);
         return; // Ação rápida, não passa o turno!
     }
     // --- HABILIDADE: BARRIL DE GOBLINS ---
     if (nome.includes('Barril de Goblin')) { // 🚀 .includes FAZ O CTRL V FUNCIONAR!
         let idAlvo = alvosDoBarril[idUnico];
-        if (!idAlvo) return narrar("Este Barril precisa atacar e focar um alvo primeiro!");
+        if (!idAlvo) { notificar(false); return narrar("Este Barril precisa atacar e focar um alvo primeiro!"); }
 
         // 🚀 LÊ O DANO EXTRA (BUFFS DA BESTA, UNIDÃO, ETC)
         let txtDano = document.getElementById("dano-" + idUnico);
@@ -511,9 +530,128 @@ mostrarEfeitoAtaque(idUnico);
         }
         
         botao.style.display = "none";
+        notificar(dado === 3);
         return; 
     }
+
+if (nome === "Bumerskeleton") { 
+        // 1. Verifica se o Bumerskeleton já atacou nesta rodada
+        if (!alvosDoBumerangue[idUnico] || alvosDoBumerangue[idUnico].length === 0) {
+            notificar(false);
+            return narrar("💀 O Bumerangue ainda não foi lançado! Você precisa atacar primeiro para criar o trajeto de alvos.");
+        }
+
+        // 🚨 A MÁGICA AQUI: Esconde o botão roxo! A chance é gasta na hora!
+        if (botao) botao.style.display = "none";
+
+        let alvosAtingidos = alvosDoBumerangue[idUnico]; 
+
+        // Rola o dado
+        let dado = Math.floor(Math.random() * 6) + 1;
+        
+        // Efeito visual no dado da tela
+        let dadoTela = document.getElementById("dado-tela");
+        if (dadoTela) {
+            dadoTela.style.animation = 'none';
+            setTimeout(() => dadoTela.style.animation = '', 10);
+            dadoTela.innerText = "🎲 " + dado;
+        }
+
+        narrar(`🎲 Bumerskeleton rolou o dado e tirou: ${dado}!`);
+
+        if (dado === 1) {
+            // EFEITO 1: BUMERANGUE VOLTA
+            let primeiroAlvo = alvosAtingidos[0]; 
+            let pacoteAlvo = document.getElementById("pacote-" + primeiroAlvo);
+            
+            if (pacoteAlvo) {
+                // Descobre qual é o próximo dano da escala 
+                let danoDoRetorno = tabelaDanoBumerangue[alvosAtingidos.length] || 4; 
+                
+                let txtVida = document.getElementById("vida-" + primeiroAlvo);
+                let vidaAtual = parseFloat(txtVida.innerText);
+                txtVida.innerText = vidaAtual - danoDoRetorno;
+
+                if (typeof mostrarEfeitoPerdaVida === "function") mostrarEfeitoPerdaVida(primeiroAlvo);
+                
+                narrar(`🪃 O bumerangue fez a curva! Retornou dando ${danoDoRetorno} de DANO na primeira carta! ROLANDO DADO DE NOVO...`);
+                
+                // Rola o dado de novo imediatamente após 2 segundos!
+                setTimeout(() => {
+                    usarHabilidade(nome, idUnico, null); // "null" para o botão não dar erro no retorno
+                }, 2000);
+            } else {
+                narrar("🪃 O bumerangue voltou, mas o primeiro alvo já estava destruído!");
+            }
+            notificar(true);
+
+        } else if (dado === 3) {
+            // EFEITO 3: FOGO EM TODOS
+            alvosAtingidos.forEach(idAlvo => {
+                let txtVida = document.getElementById("vida-" + idAlvo);
+                if (txtVida) {
+                    txtVida.innerText = parseFloat(txtVida.innerText) - 0.25;
+                    if (typeof mostrarEfeitoPerdaVida === "function") mostrarEfeitoPerdaVida(idAlvo);
+                }
+            });
+            narrar(`🔥 FOGO! O rastro do bumerangue incendiou TODAS as cartas atingidas (-0.25 de vida)!`);
+            notificar(true);
+
+       } else if (dado === 5) {
+            // GELO EM TODOS
+            alvosAtingidos.forEach(idAlvo => {
+                let pacote = document.getElementById("pacote-" + idAlvo);
+                if (pacote) {
+                    pacote.classList.add("congelada"); 
+                    pacote.style.filter = "hue-rotate(180deg) brightness(1.2)"; 
+                    
+                    if (typeof duracaoGelo !== 'undefined') {
+                        duracaoGelo[idAlvo] = 2; 
+                    }
+                }
+            });
+            narrar(`❄️ GELO ABSOLUTO! Todas as cartas no trajeto do bumerangue foram CONGELADAS!`);
+            notificar(true);
+            
+        } else {
+            // 🚨 MENSAGEM DE FALHA: Se não cair 1, 3 ou 5
+            narrar(`💀 Falhou! O dado tirou ${dado} (não foi 1, 3 ou 5). O bumerangue caiu e a chance foi perdida!`);
+            notificar(false);
+        }
+    }
+    if (nome === "Mensageiro") {
+        if (botao) botao.style.display = "none";
+
+        let dado = Math.floor(Math.random() * 6) + 1;
+        
+        let dadoTela = document.getElementById("dado-tela");
+        if (dadoTela) {
+            dadoTela.style.animation = 'none';
+            setTimeout(() => dadoTela.style.animation = '', 10);
+            dadoTela.innerText = "🎲 " + dado;
+        }
+
+        narrar(`🎲 Mensageiro rolou o dado e tirou: ${dado}!`);
+
+        if (dado === 6) {
+            narrar("🌪️ SUCESSO! O Mensageiro ativou seu Modo Área! Seus ataques normais agora causam 2 de dano a TODOS!");
+            
+            // Liga o modo área para ESTA carta específica
+            window.mensageirosEmArea[idUnico] = true;
+            
+            // Atualiza o visual do texto da carta para o jogador lembrar!
+            let txtDano = document.getElementById("dano-" + idUnico);
+            if (txtDano) {
+                txtDano.innerText = "2"; 
+                txtDano.style.color = "#9b59b6"; // Muda a cor do dano para roxo para indicar a mudança
+            }
+        } else {
+            narrar(`💀 Falhou! O dado tirou ${dado}. O Mensageiro continua com ataques normais.`);
+        }
+        notificar(dado === 6);
+    }
 }
+
 // --- PASSIVA DO NECROMANTE (CORREÇÃO DE ERRO) ---
 function verificarPassivaNecromante(carta, ehAliado) {
     // Verifica se a carta que acabou de entrar no campo é o Necromante
@@ -558,8 +696,11 @@ function verificarPassivaNecromante(carta, ehAliado) {
 function usarPassivaLadrao(idUnico, botao) {
     let ehAliado = botao.closest('#campo-j1') || botao.closest('#mao-j1');
 
-    if (ladroesQueJaRoubaram[idUnico]) {
-        return narrar("❌ Este Ladrão já usou sua passiva neste turno!");
+    // 🩹 CORREÇÃO: era 'ladroesQueJaRoubaram[idUnico]' — uma trava que nunca era resetada
+    // e travava a passiva pro resto do jogo depois do 1º uso. Passiva é "usa quando quiser",
+    // então só bloqueamos se já tiver um roubo NESTE EXATO MOMENTO aguardando alvo.
+    if (modoLadrao) {
+        return narrar("❌ Já tem um roubo do Ladrão em andamento! Escolha o alvo antes de usar de novo.");
     }
 
     let dadoTela = document.getElementById("dado-tela");
@@ -568,8 +709,6 @@ function usarPassivaLadrao(idUnico, botao) {
     dadoTela.style.animation = 'none';
     setTimeout(() => dadoTela.style.animation = '', 10);
     dadoTela.innerText = "🎲 " + resultadoDado;
-
-    ladroesQueJaRoubaram[idUnico] = true; 
 
     if (resultadoDado === 1 || resultadoDado === 3) {
         modoLadrao = true;

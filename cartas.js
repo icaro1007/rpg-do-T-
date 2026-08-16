@@ -27,7 +27,7 @@ const bancoDeCartas = [
             
             // --- CARTAS DO LOTE 3 ---
             { id: "pocaogelo", nome: "Poção de Gelo", vida: 0, dano: 0, img: "poção de gelo.png", qtd: 2 },
-            { id: "bumerskeleton", nome: "Bumerskeleton", vida: 3, dano: 1, img: "bumerskeleton.png", qtd: 2 }, 
+            { id: "Bumerskeleton", nome: "Bumerskeleton", vida: 3, dano: 1, img: "bumerskeleton.png", qtd: 2 }, 
             { id: "mensageiro", nome: "Mensageiro", vida: 2, dano: 3, img: "mensageiro.png", qtd: 2 },
             { id: "cavalotroia", nome: "Cavalo de Tróia", vida: 1, dano: 0, img: "cavalo de troia.png", qtd: 2 }, 
             { id: "criador", nome: "Criador", vida: 2, dano: 2, img: "criador.png", qtd: 2 },
