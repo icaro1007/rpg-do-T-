@@ -112,16 +112,111 @@ function usarHabilidade(nome, idUnico, botao, aoConcluir) {
     let notificar = function (sucesso) { if (typeof aoConcluir === "function") aoConcluir(sucesso); };
     let dadoTela = document.getElementById("dado-tela");
 
+    /// 🎭 CRIADOR (ÍCARO / THIAGO) — 2 usos únicos em sequência:
+    /// 1º clique: rola o dado e vira Ícaro (1-3) ou Thiago (4-6).
+    /// 2º clique: ativa o poder da forma escolhida (lê o nome ATUAL na carta, não o "nome"
+    /// recebido aqui, que sempre chega como "Criador" porque é o valor fixo do onclick).
+    if (nome === 'Criador') {
+        let pacoteCriador = document.getElementById('pacote-' + idUnico);
+        if (!pacoteCriador) return;
+        let elemNomeCriador = pacoteCriador.querySelector('.nome-carta');
+        let nomeAtual = elemNomeCriador ? elemNomeCriador.innerText.trim() : 'Criador';
+
+        if (nomeAtual === 'Criador') {
+            // FASE 1: ainda não se transformou.
+            let dado = Math.floor(Math.random() * 6) + 1;
+            document.getElementById("dado-tela").innerText = "🎲 " + dado;
+
+            let elemVida = document.getElementById('vida-' + idUnico);
+            let elemDano = document.getElementById('dano-' + idUnico);
+
+            if (dado <= 3) {
+                elemNomeCriador.innerText = 'Ícaro';
+                if (elemVida) elemVida.innerText = 3;
+                if (elemDano) elemDano.innerText = 3;
+                narrar(`🎲 Tirou ${dado}! O Criador se tornou ÍCARO! Clique em Especial de novo pra usar o poder dele: transformar qualquer carta em outra.`);
+            } else {
+                elemNomeCriador.innerText = 'Thiago';
+                if (elemVida) elemVida.innerText = 4;
+                if (elemDano) elemDano.innerText = 2;
+                narrar(`🎲 Tirou ${dado}! O Criador se tornou THIAGO! Clique em Especial de novo pra usar o poder dele: ajustar ±1 um atributo de qualquer carta.`);
+            }
+            // 🚨 NÃO esconde o botão — ele ainda tem o 2º uso (o poder da forma escolhida).
+            notificar(true);
+            return;
+        }
+
+        if (nomeAtual === 'Ícaro') {
+            modoTransformacaoIcaro = true;
+            idIcaroAtivo = idUnico;
+            narrar("🎨 ÍCARO ativado! Clique em qualquer carta em jogo (sua ou do oponente) pra transformá-la em outra tropa aleatória, mantendo a vida e o dano dela.");
+            if (botao) botao.style.display = 'none';
+            return;
+        }
+
+        if (nomeAtual === 'Thiago') {
+            modoAjusteThiago = true;
+            idThiagoAtivo = idUnico;
+            narrar("⚖️ THIAGO ativado! Clique em qualquer carta em jogo pra ajustar vida ou dano dela em ±1.");
+            if (botao) botao.style.display = 'none';
+            return;
+        }
+    }
+
+    /// ⏳ HABILIDADE: VIAJANTE DO TEMPO (dado 1 = prende uma carta inimiga no tempo)
+    if (nome === 'Viajante do Tempo') {
+        let dado = Math.floor(Math.random() * 6) + 1;
+        document.getElementById("dado-tela").innerText = "🎲 " + dado;
+        if (botao) botao.style.display = 'none'; // uso único
+
+        if (dado === 1) {
+            modoPrenderNoTempo = true;
+            idPrenderNoTempoAtivo = idUnico;
+            narrar("🎲 Tirou 1! Clique numa carta INIMIGA pra prendê-la em um momento do tempo — ela vai sumir da batalha!");
+            notificar(true);
+        } else {
+            narrar(`🎲 Tirou ${dado}. Não deu 1 — a habilidade não ativou dessa vez.`);
+            notificar(false);
+        }
+        return;
+    }
+
+    /// 👥 HABILIDADE: SEPARADO / SEPARADOIS (dado 6 = ataque dividido em 2 alvos)
+    if (nome === 'Separado' || nome === 'Separadois') {
+        let idParceira = typeof parceriaSeparado !== 'undefined' ? parceriaSeparado[idUnico] : null;
+        let parceiraViva = idParceira && document.getElementById('pacote-' + idParceira);
+
+        if (!parceiraViva) {
+            if (botao) botao.style.display = 'none';
+            notificar(false);
+            return narrar(`❌ ${nome} não tem uma parceira viva em campo pra usar essa habilidade!`);
+        }
+
+        let dado = Math.floor(Math.random() * 6) + 1;
+        document.getElementById("dado-tela").innerText = "🎲 " + dado;
+        if (botao) botao.style.display = 'none'; // uso único, vale a tentativa mesmo se não der 6
+
+        if (dado === 6) {
+            separadaoDividido[idUnico] = 2; // faltam 2 ataques: o do Separado e o da parceira
+            narrar(`🎲 Tirou 6! Agora é só atacar normalmente: clique em Atacar em ${nome} pra escolher um alvo, e depois em Atacar na parceira pra escolher OUTRO alvo — as duas vão atacar sem se puxar dessa vez, e o turno só passa depois das duas.`);
+            notificar(true);
+        } else {
+            narrar(`🎲 Tirou ${dado}. Não deu 6 — a habilidade não ativou dessa vez.`);
+            notificar(false);
+        }
+        return;
+    }
+
     /// 🪵 HABILIDADE ESPECIAL: BARRIL DE BÁRBARO
     if (nome.includes('Barril de Bárbaro')) { // 🔥 CORREÇÃO: Estava nomeCarta, agora é só 'nome'
         let dado = Math.floor(Math.random() * 6) + 1;
         document.getElementById("dado-tela").innerText = "🎲 " + dado;
         
         if (dado === 5) {
-            splashBarbaroAtivo = true;
+            splashBarbaroAtivo[idUnico] = true;
             narrar("🎲 O dado rolou 5! O próximo impacto causará +1 de dano nas cartas vizinhas!");
         } else {
-            splashBarbaroAtivo = false; 
+            splashBarbaroAtivo[idUnico] = false; 
             narrar(`🎲 O dado rolou ${dado}. Sem dano em área, mas o impacto de 3 de dano continua preparado!`);
         }
         
@@ -462,6 +557,7 @@ function usarHabilidade(nome, idUnico, botao, aoConcluir) {
             nome = "Goblin"; // Truque: Muda o nome para Goblin, assim o código dele cai direto no bloco do Goblin logo abaixo!
         }
     }
+
     // --- HABILIDADE DO GOBLIN ---
     if (nome === 'Goblin') {
         let dado = Math.floor(Math.random() * 6) + 1;
@@ -470,7 +566,8 @@ function usarHabilidade(nome, idUnico, botao, aoConcluir) {
         if (dado === 1 || dado === 2) {
             narrar(`💰 SUCESSO! Dado: ${dado}. O Goblin preparou o roubo! Clique em uma carta INIMIGA na arena para roubar 1 de DANO.`);
             modoRouboGoblin = true;
-            idGoblinLadrao = idUnico; // Guarda quem é o Goblin que vai receber o dano
+            faseRouboGoblin = 1;
+            idGoblinLadrao = idUnico; // Guarda qual Goblin ativou o roubo (define o "lado" da habilidade)
         } else {
             narrar(`❌ FALHOU! Tirou ${dado}. O Goblin tentou roubar, mas tropeçou e foi pego.`);
         }
@@ -517,14 +614,16 @@ function usarHabilidade(nome, idUnico, botao, aoConcluir) {
         dadoTela.innerText = "🎲 " + dado;
         
         if (dado === 3) {
-            let danoHabilidade = 1.5 + buffDano; // 🚀 SOMA O BUFF AQUI (0.5 + 1 da Besta = 1.5)
+            // ➕ Só o BÔNUS (0,5) — os vizinhos já levaram o impacto base (1) na passiva.
+            // Total nos vizinhos: 1 (base) + 0,5 (bônus) = 1,5, como esperado.
+            let danoHabilidade = 0.5 + buffDano;
             
             let vizinhos = obterCartasAdjacentes("pacote-" + idAlvo);
             vizinhos.forEach(vizinho => {
                 let isInimigo = vizinho.closest("#campo-j2") !== null;
                 aplicarDanoDireto(vizinho.id, danoHabilidade, isInimigo);
             });
-            narrar(`🎲 SUCESSO! Tirou 3! O Barril causou +${danoHabilidade} de dano nos vizinhos do alvo focado!`);
+            narrar(`🎲 SUCESSO! Tirou 3! O Barril causou +${danoHabilidade} de dano extra nos vizinhos do alvo focado!`);
         } else {
             narrar(`🎲 FALHA! Tirou ${dado}. A habilidade não ativou.`);
         }
@@ -606,7 +705,7 @@ if (nome === "Bumerskeleton") {
                     pacote.style.filter = "hue-rotate(180deg) brightness(1.2)"; 
                     
                     if (typeof duracaoGelo !== 'undefined') {
-                        duracaoGelo[idAlvo] = 2; 
+                        duracaoGelo[idAlvo] = 3; // 3 turnos = 1 rodada completa (mesmo padrão usado no resto do jogo)
                     }
                 }
             });
@@ -796,36 +895,66 @@ function aplicarRouboBeneficio(idPacoteAliado) {
     atualizarTodosUnidoes();
 }
 function aplicarRouboDanoGoblin(idPacoteAlvo) {
-    let idPuroAlvo = idPacoteAlvo.replace("pacote-", "");
-    let txtDanoAlvo = document.getElementById("dano-" + idPuroAlvo);
+    let pacoteClicado = document.getElementById(idPacoteAlvo);
+    if (!pacoteClicado || !idGoblinLadrao) return;
 
-    if (!txtDanoAlvo) return; 
-
-    let danoAtualAlvo = parseFloat(txtDanoAlvo.innerText);
-
-    if (danoAtualAlvo > 0) {
-        // 1. Tira 1 de dano do alvo clicado
-        txtDanoAlvo.innerText = danoAtualAlvo - 1;
-
-        // 🚨 EFEITO AQUI: O alvo perdeu o dano, a espada cai dele!
-        mostrarEfeitoPerdaAtaque(idPuroAlvo);
-        
-        // 2. Entrega 1 de dano para o Goblin que ativou o poder
-        let txtDanoGoblin = document.getElementById("dano-" + idGoblinLadrao);
-        if (txtDanoGoblin) {
-            txtDanoGoblin.innerText = parseFloat(txtDanoGoblin.innerText) + 1;
-        }
-// 🚨 EFEITO AQUI: Sobe a espadinha!
-mostrarEfeitoAtaque(idGoblinLadrao);
-
-        narrar("💰 Roubo concluído! O Goblin roubou 1 de dano do alvo!");
-    } else {
-        narrar("Essa carta já tem 0 de dano! O Goblin não conseguiu roubar nada.");
+    let pacoteGoblin = document.getElementById("pacote-" + idGoblinLadrao);
+    if (!pacoteGoblin) {
+        modoRouboGoblin = false;
+        idGoblinLadrao = null;
+        faseRouboGoblin = 1;
+        return;
     }
 
-    // Limpa a mira para você voltar a jogar normalmente
+    // O "lado" do Goblin decide quem é inimigo e quem é aliado nesta habilidade —
+    // assim funciona certo tanto se for o SEU Goblin quanto o do oponente.
+    let goblinEhJ1 = pacoteGoblin.closest("#campo-j1") !== null;
+    let cliqueEhJ1 = pacoteClicado.closest("#campo-j1") !== null;
+    let idPuroClicado = idPacoteAlvo.replace("pacote-", "");
+
+    // --- FASE 1: escolher a carta INIMIGA que perde 1 de dano ---
+    if (faseRouboGoblin === 1) {
+        if (cliqueEhJ1 === goblinEhJ1) {
+            return narrar("❌ Alvo inválido! Clique numa carta INIMIGA na arena para roubar 1 de DANO.");
+        }
+
+        let txtDanoAlvo = document.getElementById("dano-" + idPuroClicado);
+        if (!txtDanoAlvo) return;
+        let danoAtualAlvo = parseFloat(txtDanoAlvo.innerText);
+
+        if (danoAtualAlvo <= 0) {
+            narrar("Essa carta já tem 0 de dano! O Goblin não conseguiu roubar nada.");
+            modoRouboGoblin = false;
+            idGoblinLadrao = null;
+            faseRouboGoblin = 1;
+            if (typeof atualizarTodosUnidoes === "function") atualizarTodosUnidoes();
+            return;
+        }
+
+        txtDanoAlvo.innerText = danoAtualAlvo - 1;
+        mostrarEfeitoPerdaAtaque(idPuroClicado);
+
+        faseRouboGoblin = 2; // agora espera o clique na carta aliada que vai receber
+        narrar("💰 Roubou 1 de dano! Agora clique numa carta ALIADA (do time do Goblin) para entregar o ponto roubado.");
+        return; // continua com modoRouboGoblin === true, esperando a 2ª escolha
+    }
+
+    // --- FASE 2: escolher a carta ALIADA (do time do Goblin) que recebe o dano roubado ---
+    if (cliqueEhJ1 !== goblinEhJ1) {
+        return narrar("❌ Alvo inválido! Escolha uma carta do TIME DO GOBLIN para receber o dano roubado.");
+    }
+
+    let txtDanoReceptor = document.getElementById("dano-" + idPuroClicado);
+    if (txtDanoReceptor) {
+        txtDanoReceptor.innerText = parseFloat(txtDanoReceptor.innerText) + 1;
+        mostrarEfeitoAtaque(idPuroClicado);
+    }
+
+    narrar("💰 Roubo concluído! O ponto de dano foi entregue à carta escolhida!");
+
     modoRouboGoblin = false;
     idGoblinLadrao = null;
+    faseRouboGoblin = 1;
 
     if (typeof atualizarTodosUnidoes === "function") atualizarTodosUnidoes();
 }

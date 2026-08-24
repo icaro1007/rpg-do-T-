@@ -28,7 +28,11 @@
     function idsNoContainer(containerId, classe) {
         let el = document.getElementById(containerId);
         if (!el) return [];
-        return Array.from(el.getElementsByClassName(classe)).map(c => c.id.replace("pacote-", ""));
+        return Array.from(el.getElementsByClassName(classe))
+            .map(c => c.id.replace("pacote-", ""))
+            // 🐴 O Cavalo de Tróia não pode ser atacado (nem escolhido como alvo de nada) —
+            // tirando ele daqui de uma vez, nenhuma lógica do bot chega perto de tentar mirar nele.
+            .filter(idUnico => nomeDaCarta(idUnico) !== "Cavalo de Tróia");
     }
 
     function idsNaMao(maoId) {
@@ -198,6 +202,24 @@
             return true;
         }
 
+        // --- Cavaleiro das Trevas do bot aguardando o alvo principal (vizinhos levam junto) ---
+        if (typeof modoAlvoCavaleiroInimigo !== "undefined" && modoAlvoCavaleiroInimigo === true) {
+            let candidatos = idsNoContainer("campo-j1", "carta-aliada");
+            if (candidatos.length === 0) return false;
+            // Foca a maior ameaça: ela e os vizinhos dela vão levar o dano em área.
+            simularCliqueImagem(maiorAmeaca(candidatos));
+            return true;
+        }
+
+        // --- 👥 Separado/Separadois do bot aguardando escolha de parceira ---
+        if (typeof modoParceriaSeparado !== "undefined" && modoParceriaSeparado === true) {
+            let candidatos = idsNoContainer("campo-j2", "carta-inimiga")
+                .filter(id => "pacote-" + id !== "pacote-" + idSeparadoParceriaAtivo);
+            if (candidatos.length === 0) return false;
+            simularCliqueImagem(maiorAmeaca(candidatos));
+            return true;
+        }
+
         // --- Ataque do bot aguardando escolha de alvo (mais de 1 carta no seu campo) ---
         if (typeof modoAtaqueInimigo !== "undefined" && modoAtaqueInimigo === true) {
             let candidatos = idsNoContainer("campo-j1", "carta-aliada");
@@ -208,6 +230,16 @@
                 return v !== null && typeof danoInimigoPreparado !== "undefined" && v <= danoInimigoPreparado;
             });
             let alvo = matavel.length > 0 ? maiorAmeaca(matavel) : alvoMaisFragil(candidatos);
+
+            // 🛡️ Se o alvo escolhido estiver protegido por um Barril, o jogo OBRIGA a atacar
+            // o Barril protetor primeiro (senão o ataque é recusado e o bot fica preso
+            // tentando o mesmo alvo pra sempre). Redireciona pro Barril, se ele ainda existir.
+            if (typeof cartasProtegidas !== "undefined" && cartasProtegidas[alvo]) {
+                let idBarrilProtetor = cartasProtegidas[alvo];
+                let barrilAindaExiste = document.getElementById("pacote-" + idBarrilProtetor);
+                alvo = barrilAindaExiste ? idBarrilProtetor : alvo;
+            }
+
             simularCliqueImagem(alvo);
             return true;
         }
@@ -274,7 +306,18 @@
     // FASE 3 — ATACAR (só UMA ação de ataque encerra o turno)
     // -------------------------------------------------------------------
     function botAtacar() {
-        let tropasProntas = idsNoContainer("campo-j2", "carta-inimiga").filter(id => !estaCongelada(id));
+        let tropasProntas = idsNoContainer("campo-j2", "carta-inimiga")
+            .filter(id => !estaCongelada(id))
+            // 👥 Separado/Separadois com parceira viva não ataca pelo próprio botão — só
+            // quando a parceira ataca. Tirando eles daqui, o bot nunca tenta usá-los como
+            // atacante principal (senão o clique é recusado e o bot trava sem passar a vez).
+            .filter(id => {
+                if (typeof parceriaSeparado === "undefined") return true;
+                let nome = nomeDaCarta(id);
+                if (nome !== "Separado" && nome !== "Separadois") return true;
+                let idParceira = parceriaSeparado[id];
+                return !(idParceira && document.getElementById("pacote-" + idParceira));
+            });
         if (tropasProntas.length === 0) return false;
 
         let inimigosNoCampo = idsNoContainer("campo-j1", "carta-aliada");
