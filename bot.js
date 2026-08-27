@@ -10,8 +10,8 @@
    ========================================================================== */
 
 (function () {
-    const BOT_DELAY_ACAO = 2200;   // pausa entre ações do bot (ms) — dá tempo de clicar no seu Especial
-    const BOT_DELAY_INICIO = 1800; // pausa antes do bot começar a jogar no turno dele
+    const BOT_DELAY_ACAO = 3000;   // pausa entre ações do bot (ms) — dá tempo de clicar no seu Especial
+    const BOT_DELAY_INICIO = 2400; // pausa antes do bot começar a jogar no turno dele
     const MAX_ACOES_POR_TURNO = 40; // trava de segurança contra loop infinito
 
     let botJogando = false;
@@ -220,6 +220,92 @@
             return true;
         }
 
+        // --- 💚 Curandeiro do bot aguardando escolha de quem curar (prioriza o mais ferido) ---
+        if (typeof modoCuraInimigo !== "undefined" && modoCuraInimigo === true) {
+            let candidatos = idsNoContainer("campo-j2", "carta-inimiga");
+            if (candidatos.length === 0) return false;
+            simularCliqueImagem(aliadoMaisFerido(candidatos));
+            return true;
+        }
+
+        // --- 🩸 Goblin do bot aguardando escolha de quem roubar dano ---
+        if (typeof modoRouboGoblin !== "undefined" && modoRouboGoblin === true) {
+            let candidatos = idsNoContainer("campo-j1", "carta-aliada");
+            if (candidatos.length === 0) return false;
+            simularCliqueImagem(maiorAmeaca(candidatos));
+            return true;
+        }
+
+        // --- 🎨 Ícaro do bot aguardando alvo (mira a maior ameaça do time do jogador) ---
+        if (typeof modoTransformacaoIcaro !== "undefined" && modoTransformacaoIcaro === true) {
+            let candidatos = idsNoContainer("campo-j1", "carta-aliada");
+            if (candidatos.length === 0) return false;
+            simularCliqueImagem(maiorAmeaca(candidatos));
+            return true;
+        }
+
+        // --- ⚖️ Thiago do bot aguardando alvo (enfraquece a maior ameaça do jogador) ---
+        if (typeof modoAjusteThiago !== "undefined" && modoAjusteThiago === true) {
+            let candidatos = idsNoContainer("campo-j1", "carta-aliada");
+            if (candidatos.length === 0) return false;
+            simularCliqueImagem(maiorAmeaca(candidatos));
+            return true;
+        }
+
+        // --- ⏳ Viajante do Tempo do bot aguardando escolha de quem prender ---
+        if (typeof modoPrenderNoTempo !== "undefined" && modoPrenderNoTempo === true) {
+            let vjEl = document.getElementById("pacote-" + idPrenderNoTempoAtivo);
+            if (!vjEl) return false;
+            let ehJ1 = vjEl.closest("#campo-j1") !== null;
+            let candidatos = idsNoContainer(ehJ1 ? "campo-j2" : "campo-j1", ehJ1 ? "carta-inimiga" : "carta-aliada");
+            if (candidatos.length === 0) return false;
+            simularCliqueImagem(maiorAmeaca(candidatos));
+            return true;
+        }
+
+        // --- 🔮 Bruxo do bot aguardando escolha de alvo (transformar ou roubar) ---
+        if ((typeof modoBruxoTransformar !== "undefined" && modoBruxoTransformar === true) ||
+            (typeof modoBruxoRoubar !== "undefined" && modoBruxoRoubar === true)) {
+            let bxEl = document.getElementById("pacote-" + idBruxoAtivo);
+            if (!bxEl) return false;
+            let ehJ1 = bxEl.closest("#campo-j1") !== null;
+            let candidatos = idsNoContainer(ehJ1 ? "campo-j2" : "campo-j1", ehJ1 ? "carta-inimiga" : "carta-aliada");
+            if (candidatos.length === 0) return false;
+            simularCliqueImagem(maiorAmeaca(candidatos));
+            return true;
+        }
+
+        // --- 🛡️ Barril do bot aguardando escolha de quem proteger (protege o mais frágil) ---
+        if (typeof modoProtecaoBarrilInimigo !== "undefined" && modoProtecaoBarrilInimigo === true) {
+            let candidatos = idsNoContainer("campo-j2", "carta-inimiga")
+                .filter(id => id !== idBarrilProtetor);
+            if (candidatos.length === 0) return false;
+            simularCliqueImagem(alvoMaisFragil(candidatos));
+            return true;
+        }
+
+        // --- 📦 Barril de Goblin: Especial usado ANTES de atacar, aguardando alvo ---
+        if (typeof modoEspecialBarrilGoblin !== "undefined" && modoEspecialBarrilGoblin === true) {
+            let barrilEl = document.getElementById("pacote-" + idBarrilAtivo);
+            if (!barrilEl) return false;
+            let ehJ1 = barrilEl.closest("#campo-j1") !== null;
+            let candidatos = idsNoContainer(ehJ1 ? "campo-j2" : "campo-j1", ehJ1 ? "carta-inimiga" : "carta-aliada");
+            if (candidatos.length === 0) return false;
+            simularCliqueImagem(maiorAmeaca(candidatos));
+            return true;
+        }
+
+        // --- 🪃 Bumerskeleton: Especial usado ANTES de atacar, aguardando alvo ---
+        if (typeof modoEspecialBumerskeleton !== "undefined" && modoEspecialBumerskeleton === true) {
+            let bumeEl = document.getElementById("pacote-" + idBumerskeletonEspecialAtivo);
+            if (!bumeEl) return false;
+            let ehJ1 = bumeEl.closest("#campo-j1") !== null;
+            let candidatos = idsNoContainer(ehJ1 ? "campo-j2" : "campo-j1", ehJ1 ? "carta-inimiga" : "carta-aliada");
+            if (candidatos.length === 0) return false;
+            simularCliqueImagem(maiorAmeaca(candidatos));
+            return true;
+        }
+
         // --- Ataque do bot aguardando escolha de alvo (mais de 1 carta no seu campo) ---
         if (typeof modoAtaqueInimigo !== "undefined" && modoAtaqueInimigo === true) {
             let candidatos = idsNoContainer("campo-j1", "carta-aliada");
@@ -303,6 +389,70 @@
     }
 
     // -------------------------------------------------------------------
+    // FASE 2.5 — INCENDIÁRIO (acende a pólvora assim que houver alvo na arena)
+    // -------------------------------------------------------------------
+    function botIncendiario() {
+        let parados = idsNoContainer("campo-j2", "carta-inimiga")
+            .filter(id => nomeDaCarta(id) === "Incendiário")
+            .filter(id => typeof incendiarioCiclo !== "undefined" && incendiarioCiclo[id] === undefined);
+        if (parados.length === 0) return false;
+
+        let inimigosNoCampo = idsNoContainer("campo-j1", "carta-aliada");
+        if (inimigosNoCampo.length === 0) return false; // ainda sem alvo, bot espera
+
+        try {
+            iniciarAtaqueIncendiario(parados[0], true);
+        } catch (e) {
+            console.warn("[BOT] erro ao acender o Incendiário:", e);
+            return false;
+        }
+        return true;
+    }
+
+    // -------------------------------------------------------------------
+    // FASE 2.7 — USAR ESPECIAIS (o bot clica no botão "Especial 🔮" das
+    // próprias cartas que ainda não usaram; a maioria não gasta o turno, e
+    // qualquer alvo que precisem escolher é resolvido no próximo ciclo por
+    // botResolverEscolhaPendente). Cura é a exceção: ela ENCERRA o turno,
+    // então só vale a pena quando tem alguém realmente ferido pra curar.
+    // -------------------------------------------------------------------
+    function botUsarEspeciais() {
+        let candidatos = idsNoContainer("campo-j2", "carta-inimiga").filter(id => {
+            let btn = document.querySelector('#pacote-' + cssEscape(id) + ' button[onclick*="usarHabilidade"]');
+            return btn && btn.style.display !== "none";
+        });
+        if (candidatos.length === 0) return false;
+
+        for (let id of candidatos) {
+            let nome = nomeDaCarta(id);
+            let btn = document.querySelector('#pacote-' + cssEscape(id) + ' button[onclick*="usarHabilidade"]');
+            if (!btn) continue;
+
+            // 💚 Curandeiro: só vale usar (e encerrar o turno) se alguém do time estiver ferido.
+            if (nome === "Curandeiro") {
+                let aliados = idsNoContainer("campo-j2", "carta-inimiga").filter(outroId => outroId !== id);
+                let algumFerido = aliados.some(outroId => {
+                    let idBase = idBaseDaCarta(outroId);
+                    let info = (typeof bancoDeCartas !== "undefined" && idBase) ? bancoDeCartas.find(c => c.id === idBase) : null;
+                    let vidaMax = info ? info.vida : null;
+                    let vidaAtual = vidaDaCarta(outroId);
+                    return vidaMax !== null && vidaAtual !== null && vidaAtual < vidaMax;
+                });
+                if (!algumFerido) continue; // guarda a cura pra quando fizer falta de verdade
+            }
+
+            try {
+                usarHabilidade(nome, id, btn);
+            } catch (e) {
+                console.warn("[BOT] erro ao usar Especial de", nome, e);
+                continue;
+            }
+            return true; // uma ação por ciclo — dá tempo do "modo" pendente ser resolvido depois
+        }
+        return false;
+    }
+
+    // -------------------------------------------------------------------
     // FASE 3 — ATACAR (só UMA ação de ataque encerra o turno)
     // -------------------------------------------------------------------
     function botAtacar() {
@@ -362,6 +512,8 @@
         try {
             if (botResolverEscolhaPendente()) { setTimeout(botCicloDeTurno, BOT_DELAY_ACAO); return; }
             if (botJogarCartasDaMao())        { setTimeout(botCicloDeTurno, BOT_DELAY_ACAO); return; }
+            if (botIncendiario())             { setTimeout(botCicloDeTurno, BOT_DELAY_ACAO); return; }
+            if (botUsarEspeciais())           { setTimeout(botCicloDeTurno, BOT_DELAY_ACAO); return; }
             if (botAtacar())                  { setTimeout(botCicloDeTurno, BOT_DELAY_ACAO); return; }
         } catch (e) {
             console.error("[BOT] erro no ciclo de turno:", e);

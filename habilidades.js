@@ -163,6 +163,26 @@ function usarHabilidade(nome, idUnico, botao, aoConcluir) {
         }
     }
 
+    /// 🔥 HABILIDADE: INCENDIÁRIO (dado 4 = faz os turnos 1, 2 e 3 numa jogada só)
+    if (nome === 'Incendiário') {
+        let dado = Math.floor(Math.random() * 6) + 1;
+        document.getElementById("dado-tela").innerText = "🎲 " + dado;
+        if (botao) botao.style.display = 'none'; // uso único
+
+        if (dado === 4) {
+            narrar("🎲 Tirou 4! O Incendiário jogou a pólvora e queimou as 2 rodadas inteiras nessa mesma jogada!");
+            executarFaseIncendiario(idUnico, 1); // joga a pólvora
+            executarFaseIncendiario(idUnico, 2); // 1ª queimada
+            executarFaseIncendiario(idUnico, 3); // 2ª queimada — os turnos 1, 2 e 3 viram 1 turno só
+            incendiarioCiclo[idUnico] = 3; // guarda a ÚLTIMA fase executada (3); próxima passagem = fase 4 (parado), depois disso reinicia normal (sem o especial)
+            notificar(true);
+        } else {
+            narrar(`🎲 Tirou ${dado}. Não deu 4 — a habilidade não ativou dessa vez.`);
+            notificar(false);
+        }
+        return;
+    }
+
     /// ⏳ HABILIDADE: VIAJANTE DO TEMPO (dado 1 = prende uma carta inimiga no tempo)
     if (nome === 'Viajante do Tempo') {
         let dado = Math.floor(Math.random() * 6) + 1;
@@ -600,7 +620,21 @@ function usarHabilidade(nome, idUnico, botao, aoConcluir) {
     // --- HABILIDADE: BARRIL DE GOBLINS ---
     if (nome.includes('Barril de Goblin')) { // 🚀 .includes FAZ O CTRL V FUNCIONAR!
         let idAlvo = alvosDoBarril[idUnico];
-        if (!idAlvo) { notificar(false); return narrar("Este Barril precisa atacar e focar um alvo primeiro!"); }
+        if (!idAlvo) {
+            // 📦 Ainda não atacou nesta rodada — deixa ativar o Especial já escolhendo o alvo:
+            // o clique no inimigo vai aplicar o impacto normal E rolar esta habilidade em seguida.
+            let pacoteBarril = document.getElementById("pacote-" + idUnico);
+            if (!pacoteBarril) { notificar(false); return; }
+            let ehAliadoBarril = pacoteBarril.closest("#campo-j1") !== null;
+            if ((ehAliadoBarril && turnoAtivo !== 1) || (!ehAliadoBarril && turnoAtivo !== 2)) {
+                notificar(false);
+                return narrar("⏳ Ainda não é a vez desta carta atacar!");
+            }
+            modoEspecialBarrilGoblin = true;
+            idBarrilAtivo = idUnico;
+            if (botao) botao.style.display = "none";
+            return narrar("📦 Clique na carta do OPONENTE pra focar os goblins nela e já rolar a habilidade!");
+        }
 
         // 🚀 LÊ O DANO EXTRA (BUFFS DA BESTA, UNIDÃO, ETC)
         let txtDano = document.getElementById("dano-" + idUnico);
@@ -628,7 +662,7 @@ function usarHabilidade(nome, idUnico, botao, aoConcluir) {
             narrar(`🎲 FALHA! Tirou ${dado}. A habilidade não ativou.`);
         }
         
-        botao.style.display = "none";
+        if (botao) botao.style.display = "none";
         notificar(dado === 3);
         return; 
     }
@@ -636,8 +670,19 @@ function usarHabilidade(nome, idUnico, botao, aoConcluir) {
 if (nome === "Bumerskeleton") { 
         // 1. Verifica se o Bumerskeleton já atacou nesta rodada
         if (!alvosDoBumerangue[idUnico] || alvosDoBumerangue[idUnico].length === 0) {
-            notificar(false);
-            return narrar("💀 O Bumerangue ainda não foi lançado! Você precisa atacar primeiro para criar o trajeto de alvos.");
+            // 🪃 Ainda não atacou nesta rodada — deixa ativar o Especial já escolhendo o alvo:
+            // o clique no inimigo vai lançar o bumerangue (com ricochete) E já rolar a habilidade.
+            let pacoteBume = document.getElementById("pacote-" + idUnico);
+            if (!pacoteBume) { notificar(false); return; }
+            let ehAliadoBume = pacoteBume.closest("#campo-j1") !== null;
+            if ((ehAliadoBume && turnoAtivo !== 1) || (!ehAliadoBume && turnoAtivo !== 2)) {
+                notificar(false);
+                return narrar("⏳ Ainda não é a vez desta carta atacar!");
+            }
+            modoEspecialBumerskeleton = true;
+            idBumerskeletonEspecialAtivo = idUnico;
+            if (botao) botao.style.display = "none";
+            return narrar("🪃 Clique numa carta inimiga pra lançar o bumerangue nela e já rolar a habilidade!");
         }
 
         // 🚨 A MÁGICA AQUI: Esconde o botão roxo! A chance é gasta na hora!

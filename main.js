@@ -32,6 +32,7 @@ let modoAlvoBarrilInimigo = false;
 let idBarrilAtivo = null;
 let alvosDoBarril = {}; // Guarda { idDoBarril: idDoAlvo }
 let barrilJaImpactou = {}; // Guarda { idDoBarril: true } se já deu o dano de impacto
+let modoEspecialBarrilGoblin = false; // 📦 Especial do Barril de Goblin acionado ANTES de atacar (escolhe alvo e já ataca+rola)
 let modoAlvoBarrilBarbaro = false;
 let modoAlvoBarrilBarbaroInimigo = false;
 let splashBarbaroAtivo = {}; // objeto por ID (idUnico do Barril) — evita vazar o splash entre 2 Barris de Bárbaro em campo ao mesmo tempo
@@ -49,9 +50,13 @@ let modoGeloSimples = false;
 let idPocaoAtiva = null; 
 let duracaoGelo = {}; // ⏳ CRUCIAL: Guarda quem está congelado e por quantos turnos
 let alvosDoBumerangue = {}; // Guarda a lista de quem o bumerangue bateu: { idBume: ['alvo1', 'alvo2'] }
+let modoEspecialBumerskeleton = false; // 🪃 Especial do Bumerskeleton acionado ANTES de atacar
+let idBumerskeletonEspecialAtivo = null;
 let tabelaDanoBumerangue = [1, 2, 4, 4, 4, 4, 4, 4, 4, 4]; // Escala pela ORDEM do golpe na cadeia: 1º alvo leva 1, 2º leva 2, do 3º em diante 4 cada (teto pra não ficar forte demais)
 let cartasCongeladas = {}; // Registra quais cartas estão sob o efeito de gelo do bumerangue
 let cavalosDeTroiaAtivos = {}; // idUnico -> passagens de turno restantes até explodir (2 rodadas = 4 passagens, 1 rodada = vez de cada jogador)
+let incendiarioCiclo = {}; // idUnico -> fase atual (1=joga pólvora, 2 e 3=queima 1 dano cada, 4=parado, depois volta pra 1)
+let incendiarioAlvos = {}; // idUnico -> lista de IDs das cartas inimigas que receberam a pólvora nesse ciclo
 let modoTransformacaoIcaro = false; // aguardando clique na carta que vai virar outra
 let idIcaroAtivo = null;
 let modoAjusteThiago = false; // aguardando clique na carta que vai ter um atributo ajustado em ±1
@@ -440,6 +445,18 @@ function passarTurno() {
         });
     }
 
+    // 6.7 🔥 INCENDIÁRIO — avança o ciclo de cada um em campo (1=jogou pólvora, 2/3=queima,
+    // 4=parado, e no "5º turno" volta pra 1 e joga pólvora de novo, sozinho, sem precisar
+    // de nenhum clique em Atacar).
+    if (typeof incendiarioCiclo !== 'undefined') {
+        Object.keys(incendiarioCiclo).forEach(idInc => {
+            let faseAtual = incendiarioCiclo[idInc];
+            let proximaFase = faseAtual >= 4 ? 1 : faseAtual + 1;
+            executarFaseIncendiario(idInc, proximaFase);
+            if (typeof incendiarioCiclo[idInc] !== 'undefined') incendiarioCiclo[idInc] = proximaFase;
+        });
+    }
+
     // 7. ATUALIZAÇÃO VISUAL DAS UNIÕES
     if (typeof atualizarTodosUnidoes === "function") {
         atualizarTodosUnidoes();
@@ -506,6 +523,8 @@ function invocarToken(idBaseCarta, idCampo) {
         else if (modoLadrao === true && turnoAtivo === 2 && faseLadrao === 2 && !ehAliado) aplicarRouboBeneficio(idDoPacote);
         else if (modoAlvoBarril === true && !ehAliado) aplicarAlvoBarril(idDoPacote);
         else if ((modoAlvoBarrilBarbaro === true || modoAlvoBarrilBarbaroInimigo === true)) aplicarAlvoBarrilBarbaro(idDoPacote);
+        else if (typeof modoEspecialBarrilGoblin !== 'undefined' && modoEspecialBarrilGoblin === true) aplicarAlvoBarril(idDoPacote, true);
+        else if (typeof modoEspecialBumerskeleton !== 'undefined' && modoEspecialBumerskeleton === true) aplicarEspecialBumerskeletonAntesDeAtacar(idDoPacote);
         else if (modoCura === true && ehAliado) aplicarCuraAliada(idDoPacote);
         else if (modoCuraInimigo === true && !ehAliado) aplicarCuraInimiga(idDoPacote);
         else if (modoAtaqueInimigo === true && ehAliado) aplicarDanoInimigo(idDoPacote);
@@ -589,7 +608,26 @@ function invocarTokenPeloNomeSemHabilidade(nomeCarta, idCampo) {
         img.onclick = function() {
             let idDoPacote = "pacote-" + idUnico;
             let idSemPacote = idUnico;
-            
+
+            // ❄️ POÇÃO DE GELO (ALVO SIMPLES) — faltava nos tokens
+            if (typeof modoGeloSimples !== 'undefined' && modoGeloSimples === true) {
+                let pacoteAlvo = document.getElementById(idDoPacote);
+                let pacotePocao = document.getElementById("pacote-" + idPocaoAtiva);
+                let quemJogouGelo = pacotePocao && pacotePocao.parentElement ? pacotePocao.parentElement.id : "";
+                let alvoEhJ1 = pacoteAlvo.closest("#campo-j1") !== null || pacoteAlvo.closest("#mao-j1") !== null;
+                let alvoEhJ2 = pacoteAlvo.closest("#campo-j2") !== null || pacoteAlvo.closest("#mao-j2") !== null;
+                if ((quemJogouGelo.includes("j1") && alvoEhJ1) || (quemJogouGelo.includes("j2") && alvoEhJ2)) {
+                    return narrar("❌ Alvo inválido! A Poção de Gelo só pode ser usada em cartas do OPONENTE.");
+                }
+                pacoteAlvo.classList.add("congelada");
+                duracaoGelo[idSemPacote] = 3;
+                if (pacotePocao) pacotePocao.remove();
+                modoGeloSimples = false;
+                idPocaoAtiva = null;
+                narrar("❄️ Alvo atingido e congelado por 2 rodadas!");
+                return;
+            }
+
             // 🛡️ ADICIONADO: Interceção para criar vínculo no Token Aliado
             if (typeof modoProtecaoBarril !== 'undefined' && modoProtecaoBarril && ehAliado) {
                 let protegerASiMesmo = (idSemPacote === idBarrilProtetor);
@@ -604,12 +642,29 @@ function invocarTokenPeloNomeSemHabilidade(nomeCarta, idCampo) {
                 modoProtecaoBarrilInimigo = false; idBarrilProtetor = null;
                 return narrar(protegerASiMesmo ? "❌ O Barril não pode proteger a si mesmo! Escolha outra carta." : `🛡️ Vínculo criado! O Barril inimigo agora protegerá este token!`);
             }
-            else if (typeof modoTraicao !== 'undefined' && modoTraicao) executarTraicao(idDoPacote);
+            else if (typeof modoTraicao !== 'undefined' && modoTraicao) { executarTraicao(idDoPacote); return; }
+            // 💰 LADRÃO — faltava nos tokens (mesma lógica dos dois lados normais)
+            else if (typeof modoLadrao !== 'undefined' && modoLadrao === true && ehAliado && turnoAtivo === 1 && faseLadrao === 2) aplicarRouboBeneficio(idDoPacote);
+            else if (typeof modoLadrao !== 'undefined' && modoLadrao === true && ehAliado && turnoAtivo === 2 && faseLadrao === 1) aplicarRouboPrejuizo(idDoPacote);
+            else if (typeof modoLadrao !== 'undefined' && modoLadrao === true && !ehAliado && turnoAtivo === 1 && faseLadrao === 1) aplicarRouboPrejuizo(idDoPacote);
+            else if (typeof modoLadrao !== 'undefined' && modoLadrao === true && !ehAliado && turnoAtivo === 2 && faseLadrao === 2) aplicarRouboBeneficio(idDoPacote);
             else if (typeof modoAtaqueInimigo !== 'undefined' && modoAtaqueInimigo && ehAliado) aplicarDanoInimigo(idDoPacote);
             else if (typeof modoCura !== 'undefined' && modoCura && ehAliado) aplicarCuraAliada(idDoPacote);
             else if (typeof modoCuraInimigo !== 'undefined' && modoCuraInimigo && !ehAliado) aplicarCuraInimiga(idDoPacote);
+            // 🩸 ROUBO DE DANO DO GOBLIN — faltava nos tokens
+            else if (typeof modoRouboGoblin !== 'undefined' && modoRouboGoblin === true) aplicarRouboDanoGoblin(idDoPacote);
             else if (typeof modoAlvoBarril !== 'undefined' && modoAlvoBarril && !ehAliado) aplicarAlvoBarril(idDoPacote);
             else if (typeof modoAlvoBarrilBarbaro !== 'undefined' && (modoAlvoBarrilBarbaro || modoAlvoBarrilBarbaroInimigo)) aplicarAlvoBarrilBarbaro(idDoPacote);
+            else if (typeof modoEspecialBarrilGoblin !== 'undefined' && modoEspecialBarrilGoblin === true) aplicarAlvoBarril(idDoPacote, true);
+            else if (typeof modoEspecialBumerskeleton !== 'undefined' && modoEspecialBumerskeleton === true) aplicarEspecialBumerskeletonAntesDeAtacar(idDoPacote);
+            // ⚔️ CAVALEIRO DAS TREVAS — faltava nos tokens (as duas direções)
+            else if (typeof modoAlvoCavaleiro !== 'undefined' && modoAlvoCavaleiro === true && !ehAliado) aplicarAlvoCavaleiro(idDoPacote);
+            else if (typeof modoAlvoCavaleiroInimigo !== 'undefined' && modoAlvoCavaleiroInimigo === true && ehAliado) aplicarAlvoCavaleiroInimigo(idDoPacote);
+            // 🎨 ÍCARO / ⚖️ THIAGO / 👥 SEPARADO / ⏳ VIAJANTE DO TEMPO — faltavam nos tokens
+            else if (typeof modoTransformacaoIcaro !== 'undefined' && modoTransformacaoIcaro === true) aplicarTransformacaoIcaro(idDoPacote);
+            else if (typeof modoAjusteThiago !== 'undefined' && modoAjusteThiago === true) aplicarAjusteThiago(idDoPacote);
+            else if (typeof modoParceriaSeparado !== 'undefined' && modoParceriaSeparado === true) aplicarParceriaSeparado(idDoPacote);
+            else if (typeof modoPrenderNoTempo !== 'undefined' && modoPrenderNoTempo === true) aplicarPrenderNoTempo(idDoPacote);
             else if (typeof suportePreparado !== 'undefined' && suportePreparado !== null) equiparSuporte(idSemPacote);
             else if (ehAliado) iniciarAtaque(novaCarta.nome, idSemPacote);
             else receberAtaque("vida-" + idSemPacote, idDoPacote);
@@ -763,6 +818,10 @@ function jogarCarta(idDoPacote) {
                 narrar(`👥 ${nomeDaCartaHtml} entrou em campo, mas não tem nenhuma outra carta sua pra ser parceira ainda — vai atacar sozinho por enquanto.`);
             }
         }
+
+        if (nomeDaCartaHtml === 'Incendiário') {
+            narrar("🔥 Incendiário entrou em campo! Use o botão \"Jogar Pólvora\" quando houver um alvo na arena.");
+        }
     }
 
     let cartaBase = bancoDeCartas.find(c => c.nome === nomeDaCartaHtml);
@@ -866,6 +925,8 @@ imagem.onclick = function() {
         else if (modoCura === true) aplicarCuraAliada(idDoPacote);
         else if (modoRouboGoblin === true) aplicarRouboDanoGoblin(idDoPacote);
         else if (modoAlvoBarril === true) aplicarAlvoBarril(idDoPacote);
+        else if (typeof modoEspecialBarrilGoblin !== 'undefined' && modoEspecialBarrilGoblin === true) aplicarAlvoBarril(idDoPacote, true);
+        else if (typeof modoEspecialBumerskeleton !== 'undefined' && modoEspecialBumerskeleton === true) aplicarEspecialBumerskeletonAntesDeAtacar(idDoPacote);
         else if (modoAlvoCavaleiroInimigo === true) aplicarAlvoCavaleiroInimigo(idDoPacote);
         else if (modoTransformacaoIcaro === true) aplicarTransformacaoIcaro(idDoPacote);
         else if (modoAjusteThiago === true) aplicarAjusteThiago(idDoPacote);
@@ -940,6 +1001,10 @@ function jogarCartaInimigo(idDoPacote) {
                 narrar(`👥 ${nomeDaCartaHtml} inimigo entrou em campo, mas ainda não tem outra carta pra ser parceira.`);
             }
         }
+
+        if (nomeDaCartaHtml === 'Incendiário') {
+            narrar("🔥 Incendiário inimigo entrou em campo! Ele vai jogar a pólvora quando houver um alvo na arena.");
+        }
     }
     
     pacoteCarta.className = "carta-inimiga";
@@ -984,6 +1049,8 @@ function jogarCartaInimigo(idDoPacote) {
         else if (modoAlvoBarrilBarbaro === true || modoAlvoBarrilBarbaroInimigo === true) aplicarAlvoBarrilBarbaro(idDoPacote);
         else if (modoRouboGoblin === true) aplicarRouboDanoGoblin(idDoPacote); 
         else if (modoAlvoBarril === true) aplicarAlvoBarril(idDoPacote);
+        else if (typeof modoEspecialBarrilGoblin !== 'undefined' && modoEspecialBarrilGoblin === true) aplicarAlvoBarril(idDoPacote, true);
+        else if (typeof modoEspecialBumerskeleton !== 'undefined' && modoEspecialBumerskeleton === true) aplicarEspecialBumerskeletonAntesDeAtacar(idDoPacote);
         else if (modoAlvoCavaleiro === true) aplicarAlvoCavaleiro(idDoPacote);
         else if (modoTransformacaoIcaro === true) aplicarTransformacaoIcaro(idDoPacote);
         else if (modoAjusteThiago === true) aplicarAjusteThiago(idDoPacote);
@@ -1052,7 +1119,7 @@ function criarHTMLCarta(carta, funcaoJogar, classeCss, ehAliado) {
     // curar o time errado sem querer. Agora só aparece o botão do lado certo da carta.
     let btnCura = (carta.nome === 'Curandeiro' && ehAliado) ? `<button onclick="iniciarCura('${carta.idUnico}')" style="background-color: green; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Curar 💚</button>` : '';
     let btnCuraInimigo = (carta.nome === 'Curandeiro' && !ehAliado) ? `<button onclick="iniciarCuraInimigo('${carta.idUnico}')" style="background-color: green; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Curar Oponente 💚</button>` : '';
-    let btnEspecial = (carta.nome === 'Poção de Gelo' ||carta.nome === 'Bruxo' || carta.nome === 'Necromante' || carta.nome === 'Ork' || carta.nome === 'Curandeiro' || carta.nome === 'Ctrl C' || carta.nome === 'Ctrl V' || carta.nome === 'Cavaleiro das Trevas' || carta.nome === 'Goblin' || carta.nome === 'Trio de Goblin' || carta.nome === 'Barril de Goblin' || carta.nome === 'Guerreiro' || carta.nome === 'Barril de Bárbaro' || carta.nome === 'Barril'|| carta.nome === 'Bumerskeleton' || carta.nome === 'Mensageiro' || carta.nome === 'Criador' || carta.nome === 'Separado' || carta.nome === 'Separadois' || carta.nome === 'Viajante do Tempo') ? `<button onclick="usarHabilidade('${carta.nome}', '${carta.idUnico}', this)" style="background-color: purple; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Especial 🔮</button>` : '';
+    let btnEspecial = (carta.nome === 'Poção de Gelo' ||carta.nome === 'Bruxo' || carta.nome === 'Necromante' || carta.nome === 'Ork' || carta.nome === 'Curandeiro' || carta.nome === 'Ctrl C' || carta.nome === 'Ctrl V' || carta.nome === 'Cavaleiro das Trevas' || carta.nome === 'Goblin' || carta.nome === 'Trio de Goblin' || carta.nome === 'Barril de Goblin' || carta.nome === 'Guerreiro' || carta.nome === 'Barril de Bárbaro' || carta.nome === 'Barril'|| carta.nome === 'Bumerskeleton' || carta.nome === 'Mensageiro' || carta.nome === 'Criador' || carta.nome === 'Separado' || carta.nome === 'Separadois' || carta.nome === 'Viajante do Tempo' || carta.nome === 'Incendiário') ? `<button onclick="usarHabilidade('${carta.nome}', '${carta.idUnico}', this)" style="background-color: purple; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Especial 🔮</button>` : '';
     let btnLadrao = (carta.nome === 'Ladrão') ? `<button onclick="usarPassivaLadrao('${carta.idUnico}', this)" style="background-color: #f1c40f; color: black; font-weight: bold; width: 100%; margin-bottom: 2px; cursor: pointer;">Passiva 💰</button>` : '';
     let btnCtrlC = (carta.nome === 'Ctrl C' || carta.nome === 'Ctrl V') ? `<button onclick="usarPassivaCtrlC('${carta.idUnico}', this)" style="background-color: #34495e; color: white; font-weight: bold; width: 100%; margin-bottom: 2px; cursor: pointer;">Passiva 📋</button>` : '';
     // 👥 Sempre disponível (não é uso único) — deixa trocar a parceira quantas vezes quiser.
@@ -1060,10 +1127,19 @@ function criarHTMLCarta(carta, funcaoJogar, classeCss, ehAliado) {
     // ⏳ Sempre visível — a função interna já recusa se essa carta já tiver usado a Passiva.
     let btnViajarNoTempo = (carta.nome === 'Viajante do Tempo') ? `<button onclick="usarPassivaViajante('${carta.idUnico}', this)" style="background-color: #8e44ad; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Viajar no Tempo ⏳</button>` : '';
 
+    // 🔥 O Incendiário não tem o botão normal de Atacar — no lugar dele entra o botão
+    // "Jogar Pólvora", que só acende o ciclo quando houver alvo na arena inimiga.
+    let btnAtacarAliado = (carta.nome === 'Incendiário')
+        ? `<button class="btn-polvora-incendiario" onclick="iniciarAtaqueIncendiario('${carta.idUnico}', false)" style="padding: 5px; background-color: #b34700; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Jogar Pólvora 🔥</button>`
+        : `<button onclick="iniciarAtaque('${carta.nome}', '${carta.idUnico}')" style="padding: 5px; width: 100%; margin-bottom: 2px; cursor: pointer;">Atacar ⚔️</button>`;
+    let btnAtacarInimigo = (carta.nome === 'Incendiário')
+        ? `<button class="btn-polvora-incendiario" onclick="iniciarAtaqueIncendiario('${carta.idUnico}', true)" style="padding: 5px; background-color: #b34700; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Jogar Pólvora 🔥</button>`
+        : `<button onclick="inimigoAtacar('${carta.idUnico}')" style="padding: 5px; background-color: darkred; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Atacar ⚔️</button>`;
+
     let botoes = ehAliado ? `
         ${btnCtrlC}
         ${btnCura}
-        <button onclick="iniciarAtaque('${carta.nome}', '${carta.idUnico}')" style="padding: 5px; width: 100%; margin-bottom: 2px; cursor: pointer;">Atacar ⚔️</button>
+        ${btnAtacarAliado}
         ${btnEspecial}
         ${btnLadrao}
         ${btnTrocarParceiro}
@@ -1071,7 +1147,7 @@ function criarHTMLCarta(carta, funcaoJogar, classeCss, ehAliado) {
     ` : `
         ${btnCtrlC}
         ${btnCuraInimigo}
-        <button onclick="inimigoAtacar('${carta.idUnico}')" style="padding: 5px; background-color: darkred; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Atacar ⚔️</button>
+        ${btnAtacarInimigo}
         ${btnEspecial}
         ${btnLadrao}
         ${btnTrocarParceiro}
@@ -1621,6 +1697,70 @@ function aplicarDanoAtaqueArea(idPacoteAlvo, dano, isInimigo) {
 // um Barril de Goblin (3) ou um Barril de Bárbaro (5), sempre "Sem Habilidade" (só a
 // passiva). Compartilhada pelos 3 jeitos de uma carta morrer (ataque normal dos dois lados
 // e aplicarDanoDireto, usada por poções/habilidades/ataques em área).
+// 🔥 INCENDIÁRIO — botão "Jogar Pólvora" que dá o START do ciclo. Só deixa acender se
+// existir pelo menos 1 carta inimiga na arena AGORA; senão a pólvora se perderia no
+// vazio e o ciclo ficaria travado sem alvo pro resto da partida (era esse o bug de
+// ele "atacar involuntariamente" com a arena vazia).
+function iniciarAtaqueIncendiario(idIncendiario, isInimigo) {
+    if (incendiarioCiclo[idIncendiario] !== undefined) return; // já está em ciclo, não deixa reiniciar
+
+    let ladoInc = isInimigo ? "j2" : "j1";
+    let ladoInimigo = ladoInc === "j1" ? "j2" : "j1";
+    let classeInimiga = ladoInimigo === "j1" ? "carta-aliada" : "carta-inimiga";
+    let campoInimigo = document.getElementById("campo-" + ladoInimigo);
+    let temAlvo = campoInimigo && campoInimigo.getElementsByClassName(classeInimiga).length > 0;
+
+    if (!temAlvo) {
+        narrar("🔥 Ainda não há ninguém na arena inimiga! O Incendiário espera o momento certo pra jogar a pólvora.");
+        return;
+    }
+
+    executarFaseIncendiario(idIncendiario, 1);
+    incendiarioCiclo[idIncendiario] = 1; // guarda a ÚLTIMA fase executada (1); a próxima passagem de turno roda a fase 2
+
+    let pacoteInc = document.getElementById("pacote-" + idIncendiario);
+    let botao = pacoteInc && pacoteInc.querySelector(".btn-polvora-incendiario");
+    if (botao) botao.style.display = "none"; // uso único pra começar o ciclo
+}
+
+// 🔥 INCENDIÁRIO — executa UMA fase do ciclo (1=joga pólvora, 2/3=queima 1 dano em cada
+// alvo marcado, 4=parado). Chamada tanto pelo botão "Jogar Pólvora" (fase 1)
+// quanto a cada passagem de turno (fases seguintes).
+function executarFaseIncendiario(idIncendiario, fase) {
+    let pacoteInc = document.getElementById("pacote-" + idIncendiario);
+    if (!pacoteInc) { delete incendiarioCiclo[idIncendiario]; delete incendiarioAlvos[idIncendiario]; return; }
+
+    let ladoInc = pacoteInc.closest("#campo-j1") ? "j1" : "j2";
+    let ladoInimigo = ladoInc === "j1" ? "j2" : "j1";
+    let classeInimiga = ladoInimigo === "j1" ? "carta-aliada" : "carta-inimiga";
+    let nomeInc = pacoteInc.querySelector(".nome-carta").innerText.trim();
+    let rotuloInc = ladoInc === "j1" ? nomeInc : `${nomeInc} do oponente`;
+
+    if (fase === 1) {
+        let campoInimigo = document.getElementById("campo-" + ladoInimigo);
+        let inimigos = campoInimigo ? Array.from(campoInimigo.getElementsByClassName(classeInimiga)).map(p => p.id) : [];
+        incendiarioAlvos[idIncendiario] = inimigos;
+        if (inimigos.length > 0) narrar(`🔥 ${rotuloInc} jogou pólvora em todas as cartas inimigas da arena!`);
+    } else if (fase === 2 || fase === 3) {
+        let alvos = incendiarioAlvos[idIncendiario] || [];
+        let algumAtingido = false;
+        alvos.forEach(idAlvo => {
+            if (document.getElementById(idAlvo)) {
+                aplicarDanoDireto(idAlvo, 1, ladoInimigo === "j2");
+                algumAtingido = true;
+            }
+        });
+        if (algumAtingido) {
+            narrar(fase === 2
+                ? `🔥 ${rotuloInc} acendeu a pólvora! 1 de dano em cada carta atingida.`
+                : `🔥 A pólvora do ${rotuloInc} continua queimando! Mais 1 de dano em cada carta atingida.`);
+        }
+    }
+    // fase 4: parado, não faz nada — só espera o ciclo reiniciar.
+
+    if (typeof atualizarTodosUnidoes === "function") atualizarTodosUnidoes();
+}
+
 function processarMortePassivaBarril(nomeDestaCarta, campoDestino, mensagemBase) {
     if (nomeDestaCarta !== "Barril") return;
 
@@ -1968,7 +2108,7 @@ function aplicarPrenderNoTempo(idPacoteAlvo) {
     idPrenderNoTempoAtivo = null;
 }
 
-function aplicarAlvoBarril(idPacoteAlvo) {
+function aplicarAlvoBarril(idPacoteAlvo, viaEspecial) {
     let pacoteAlvo = document.getElementById(idPacoteAlvo);
     let pacoteBarril = document.getElementById("pacote-" + idBarrilAtivo);
     
@@ -2025,6 +2165,11 @@ function aplicarAlvoBarril(idPacoteAlvo) {
     }
 
     idBarrilAtivo = null;
+
+    if (viaEspecial) {
+        modoEspecialBarrilGoblin = false;
+        usarHabilidade('Barril de Goblin', idBarrilPuro, null);
+    }
     passarTurno(); 
 }
 function equiparSuporte(idAlvo) {
@@ -2375,7 +2520,42 @@ function gerarPocaoAleatoria(idMao) {
     }
 }
 // ====== MOTOR DO BUMERANGUE ======
-function executarChainBumerangue(idBumerskeleton, idPrimeiroAlvo, campoAlvoId) {
+// 🪃 BUMERSKELETON — chamada quando o Especial foi clicado ANTES de atacar: o clique no
+// inimigo aqui faz o papel do ataque normal (dano base + ricochete nos outros) e, assim
+// que a cadeia termina, já rola a habilidade especial nela.
+function aplicarEspecialBumerskeletonAntesDeAtacar(idPacoteAlvo) {
+    let idBume = idBumerskeletonEspecialAtivo;
+    modoEspecialBumerskeleton = false;
+    idBumerskeletonEspecialAtivo = null;
+
+    let pacoteBume = document.getElementById("pacote-" + idBume);
+    let pacoteAlvo = document.getElementById(idPacoteAlvo);
+    if (!pacoteBume || !pacoteAlvo) return;
+
+    let ladoBume = pacoteBume.closest("#campo-j1") ? "j1" : "j2";
+    let ladoAlvo = pacoteAlvo.closest("#campo-j1") ? "j1" : "j2";
+    if (ladoBume === ladoAlvo) return narrar("❌ Escolha uma carta do campo OPOSTO para o bumerangue acertar!");
+
+    let idAlvoPuro = idPacoteAlvo.replace("pacote-", "");
+    let txtDanoBume = document.getElementById("dano-" + idBume);
+    let danoBase = txtDanoBume ? parseFloat(txtDanoBume.innerText) : 0;
+    let txtVidaAlvo = document.getElementById("vida-" + idAlvoPuro);
+    if (!txtVidaAlvo) return;
+
+    let nomeAlvo = pacoteAlvo.querySelector(".nome-carta").innerText;
+    let isInimigoParaOJogo = (ladoAlvo === "j2");
+    let campoAlvoId = (ladoAlvo === "j1") ? "campo-j1" : "campo-j2";
+
+    aplicarDanoAtaqueArea(idPacoteAlvo, danoBase, isInimigoParaOJogo);
+    narrar(`🪃 O bumerangue acertou [${nomeAlvo}] causando ${danoBase} de dano!`);
+
+    // Se o alvo já morreu com o golpe inicial, a cadeia continua nos outros normalmente.
+    executarChainBumerangue(idBume, idAlvoPuro, campoAlvoId, () => {
+        usarHabilidade("Bumerskeleton", idBume, null);
+    });
+}
+
+function executarChainBumerangue(idBumerskeleton, idPrimeiroAlvo, campoAlvoId, aoConcluir) {
     try {
         if (typeof alvosDoBumerangue === 'undefined') {
             return narrar("⚠️ Erro: As variáveis do bumerangue estão faltando no topo do main.js!");
@@ -2383,7 +2563,7 @@ function executarChainBumerangue(idBumerskeleton, idPrimeiroAlvo, campoAlvoId) {
         alvosDoBumerangue[idBumerskeleton] = [idPrimeiroAlvo];
 
         let campo = document.getElementById(campoAlvoId);
-        if (!campo) return;
+        if (!campo) { if (typeof aoConcluir === "function") aoConcluir(); return; }
 
         let classeCartas = (campoAlvoId === "campo-j2") ? "carta-inimiga" : "carta-aliada";
         let outrasCartas = Array.from(campo.getElementsByClassName(classeCartas));
@@ -2426,6 +2606,11 @@ function executarChainBumerangue(idBumerskeleton, idPrimeiroAlvo, campoAlvoId) {
             delay += 600;
             indexDano++;
         });
+
+        // ⏳ Só avisa que a cadeia terminou depois do último ricochete de verdade ter acontecido.
+        if (typeof aoConcluir === "function") {
+            setTimeout(aoConcluir, delay + 200);
+        }
     } catch (erro) {
         console.error("Erro no ricochete: ", erro);
     }
