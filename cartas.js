@@ -36,5 +36,15 @@ const bancoDeCartas = [
             { id: "separado", nome: "Separado", vida: 3, dano: 2, img: "separado.png", qtd: 1 },
             { id: "separado2", nome: "Separadois", vida: 3, dano: 2, img: "separado 2.png", qtd: 1 }, 
             { id: "viajante", nome: "Viajante do Tempo", vida: 4, dano: 1, img: "viajante do tempo.png", qtd: 2 },
-            { id: "incendiario", nome: "Incendiário", vida: 4, dano: 2, img: "incendiário.png", qtd: 3 }
+            { id: "incendiario", nome: "Incendiário", vida: 4, dano: 2, img: "incendiário.png", qtd: 3 },
+
+            // --- CARTAS DO LOTE 4 ---
+            { id: "vampi7", nome: "Vampi7", vida: 0, dano: 0, img: "vampi7.png", qtd: 2 },
+            { id: "portable", nome: "Portable", vida: 2, dano: 1, img: "portable.png", qtd: 2 },
+            { id: "plus_life", nome: "Plus Life", vida: 0, dano: 0, img: "plus_life.png", qtd: 2 },
+            { id: "reviverta", nome: "Reviverta", vida: 0, dano: 0, img: "reviverta.png", qtd: 2 },
+            { id: "cracker", nome: "Cracker", vida: 0, dano: 0, img: "cracker.png", qtd: 2 },
+            { id: "allsforms", nome: "Allsforms", vida: 0, dano: 0, img: "allsforms.png", qtd: 2 },
+            { id: "dupliquetion", nome: "Dupliquetion", vida: 0, dano: 0, img: "dupliquetion.png", qtd: 2 },
+            { id: "auvex", nome: "Auvex", vida: 0, dano: 0, img: "auvex.png", qtd: 2 }
         ];

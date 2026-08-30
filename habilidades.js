@@ -740,6 +740,7 @@ if (nome === "Bumerskeleton") {
             });
             narrar(`🔥 FOGO! O rastro do bumerangue incendiou TODAS as cartas atingidas (-0.25 de vida)!`);
             notificar(true);
+            passarTurno(); // 🩹 CORREÇÃO: faltava passar o turno — dava pra atacar de novo de graça.
 
        } else if (dado === 5) {
             // GELO EM TODOS
@@ -756,11 +757,13 @@ if (nome === "Bumerskeleton") {
             });
             narrar(`❄️ GELO ABSOLUTO! Todas as cartas no trajeto do bumerangue foram CONGELADAS!`);
             notificar(true);
+            passarTurno(); // 🩹 CORREÇÃO: faltava passar o turno — dava pra atacar de novo de graça.
             
         } else {
             // 🚨 MENSAGEM DE FALHA: Se não cair 1, 3 ou 5
             narrar(`💀 Falhou! O dado tirou ${dado} (não foi 1, 3 ou 5). O bumerangue caiu e a chance foi perdida!`);
             notificar(false);
+            passarTurno(); // 🩹 CORREÇÃO: faltava passar o turno — dava pra atacar de novo de graça.
         }
     }
     if (nome === "Mensageiro") {
@@ -1056,4 +1059,9 @@ function usarPassivaCtrlC(idUnico, botao) {
         ${btnEspecial}
         ${botoesExtras}
     `;
+
+    // 🩹 CORREÇÃO: faltava recalcular o bônus do Unidão na hora — sem isso, um Ctrl C que
+    // acabou de copiar o Unidão ficava com o dano errado até alguma OUTRA ação disparar
+    // atualizarTodosUnidoes() por conta própria.
+    if (typeof atualizarTodosUnidoes === "function") atualizarTodosUnidoes();
 }

@@ -68,11 +68,17 @@ let idSeparadoParceriaAtivo = null;
 let separadaoDividido = {}; // idSeparado -> quantos ataques da dupla ainda faltam (habilidade dado 6)
 let modoPrenderNoTempo = false; // aguardando clique na carta inimiga que vai ficar presa no tempo
 let idPrenderNoTempoAtivo = null;
+let portableDuracao = {}; // idUnico -> passagens de turno restantes até a bateria acabar (2 rodadas = 4 passagens)
+let cemiterio = { j1: [], j2: [] }; // guarda as cartas mortas de cada lado, prontas pra Reviverta trazer de volta
+let revivertaPendente = null; // { idItem, ehAliado } enquanto o cemitério está aberto aguardando escolha
+let crackerPendente = null; // { idItem, ehAliado } enquanto a tela de roubo do Cracker está aberta aguardando escolha
+let buffsAllsforms = {}; // idUnico -> array de { bonus, restam } — restam em passagens de turno (1 rodada = 2 passagens)
+let dupliquetionPendente = null; // { idItem, ehAliado } enquanto a tela de escolha da Dupliquetion está aberta
 
 // 🚨 NOVIDADE: A lista de suportes/poções agora fica no topo do código!
 let suportesReais = [
     "besta", "recuperida", "velux", "pocaotraicao", 
-    "adiv", "pocaogelo", "escudo_item", "cavalotroia", "fogueira",
+    "adiv", "pocaogelo", "escudo_item", "cavalotroia", "fogueira", "vampi7", "portable", "plus_life", "reviverta", "cracker", "allsforms", "dupliquetion", "auvex",
 ];
 
 function narrar(mensagem) {
@@ -445,6 +451,42 @@ function passarTurno() {
         });
     }
 
+    // 6.65 🛸 PORTABLE — contagem regressiva da bateria (2 rodadas = 4 passagens de turno);
+    // quando acaba, a bateria acaba de vez e ele some do campo (sem nenhum efeito extra).
+    if (typeof portableDuracao !== 'undefined') {
+        Object.keys(portableDuracao).forEach(idCarta => {
+            portableDuracao[idCarta]--;
+            if (portableDuracao[idCarta] <= 0) {
+                let pacotePortable = document.getElementById("pacote-" + idCarta);
+                if (pacotePortable) {
+                    narrar("🛸 A bateria do Portable acabou e ele saiu de campo!");
+                    pacotePortable.remove();
+                }
+                delete portableDuracao[idCarta];
+            }
+        });
+    }
+
+    // 6.66 💥 ALLSFORMS — contagem regressiva dos buffs de +3 dano (1 rodada = 2 passagens de
+    // turno); cada buff é revertido individualmente quando o dele acaba (dá pra empilhar vários).
+    if (typeof buffsAllsforms !== 'undefined') {
+        Object.keys(buffsAllsforms).forEach(idCarta => {
+            let lista = buffsAllsforms[idCarta];
+            for (let i = lista.length - 1; i >= 0; i--) {
+                lista[i].restam--;
+                if (lista[i].restam <= 0) {
+                    let txtDano = document.getElementById("dano-" + idCarta);
+                    if (txtDano) {
+                        let danoAtual = parseFloat(txtDano.innerText) || 0;
+                        txtDano.innerText = Math.max(0, danoAtual - lista[i].bonus);
+                    }
+                    lista.splice(i, 1);
+                }
+            }
+            if (lista.length === 0) delete buffsAllsforms[idCarta];
+        });
+    }
+
     // 6.7 🔥 INCENDIÁRIO — avança o ciclo de cada um em campo (1=jogou pólvora, 2/3=queima,
     // 4=parado, e no "5º turno" volta pra 1 e joga pólvora de novo, sozinho, sem precisar
     // de nenhum clique em Atacar).
@@ -521,6 +563,9 @@ function invocarToken(idBaseCarta, idCampo) {
         else if (modoLadrao === true && turnoAtivo === 1 && faseLadrao === 2 && ehAliado) aplicarRouboBeneficio(idDoPacote);
         else if (modoLadrao === true && turnoAtivo === 2 && faseLadrao === 1 && ehAliado) aplicarRouboPrejuizo(idDoPacote);
         else if (modoLadrao === true && turnoAtivo === 2 && faseLadrao === 2 && !ehAliado) aplicarRouboBeneficio(idDoPacote);
+        // 🩹 CORREÇÃO: faltava aqui também (token invocado) — clicar no lado/fase errada
+        // durante o roubo do Ladrão vazava pra ataque/etc. em vez de avisar.
+        else if (modoLadrao === true) narrar("❌ Alvo inválido para o Ladrão! Clique na carta certa pra continuar o roubo.");
         else if (modoAlvoBarril === true && !ehAliado) aplicarAlvoBarril(idDoPacote);
         else if ((modoAlvoBarrilBarbaro === true || modoAlvoBarrilBarbaroInimigo === true)) aplicarAlvoBarrilBarbaro(idDoPacote);
         else if (typeof modoEspecialBarrilGoblin !== 'undefined' && modoEspecialBarrilGoblin === true) aplicarAlvoBarril(idDoPacote, true);
@@ -648,6 +693,9 @@ function invocarTokenPeloNomeSemHabilidade(nomeCarta, idCampo) {
             else if (typeof modoLadrao !== 'undefined' && modoLadrao === true && ehAliado && turnoAtivo === 2 && faseLadrao === 1) aplicarRouboPrejuizo(idDoPacote);
             else if (typeof modoLadrao !== 'undefined' && modoLadrao === true && !ehAliado && turnoAtivo === 1 && faseLadrao === 1) aplicarRouboPrejuizo(idDoPacote);
             else if (typeof modoLadrao !== 'undefined' && modoLadrao === true && !ehAliado && turnoAtivo === 2 && faseLadrao === 2) aplicarRouboBeneficio(idDoPacote);
+            // 🩹 CORREÇÃO: mesma trava dos outros três lugares — clicar no alvo errado durante
+            // o roubo do Ladrão vazava pra outra ação em vez de avisar.
+            else if (typeof modoLadrao !== 'undefined' && modoLadrao === true) narrar("❌ Alvo inválido para o Ladrão! Clique na carta certa pra continuar o roubo.");
             else if (typeof modoAtaqueInimigo !== 'undefined' && modoAtaqueInimigo && ehAliado) aplicarDanoInimigo(idDoPacote);
             else if (typeof modoCura !== 'undefined' && modoCura && ehAliado) aplicarCuraAliada(idDoPacote);
             else if (typeof modoCuraInimigo !== 'undefined' && modoCuraInimigo && !ehAliado) aplicarCuraInimiga(idDoPacote);
@@ -783,9 +831,15 @@ function jogarCarta(idDoPacote) {
     return usarHabilidade("Poção de Gelo", idSemPacote, null);
 }
     if (textoBusca.includes("besta")) return ativarSuporte("Besta", idSemPacote);
+    if (textoBusca.includes("auvex")) return ativarSuporte("Auvex", idSemPacote);
     if (textoBusca.includes("velux") || textoBusca.includes("veluz")) return ativarSuporte("Velux", idSemPacote);
     if (textoBusca.includes("adiv")) return ativarSuporte("Adiv", idSemPacote);
     if (textoBusca.includes("recuperida")) return ativarSuporte("Recuperida", idSemPacote);
+    if (textoBusca.includes("plus life")) return ativarSuporte("PlusLife", idSemPacote);
+    if (textoBusca.includes("reviverta")) return usarReviverta(idSemPacote, true);
+    if (textoBusca.includes("cracker")) return usarCracker(idSemPacote, true);
+    if (textoBusca.includes("allsforms")) return usarAllsforms(idSemPacote, true);
+    if (textoBusca.includes("dupliquetion")) return usarDupliquetion(idSemPacote, true);
     if (textoBusca.includes("traição") || textoBusca.includes("traicao")) return ativarSuporte("Traicao", idSemPacote);
     if (textoBusca.includes("escudo")) return ativarSuporte("Escudo", idSemPacote);
     if (textoBusca.includes("fogueira")) return usarFogueira(idSemPacote, "j1");
@@ -821,6 +875,11 @@ function jogarCarta(idDoPacote) {
 
         if (nomeDaCartaHtml === 'Incendiário') {
             narrar("🔥 Incendiário entrou em campo! Use o botão \"Jogar Pólvora\" quando houver um alvo na arena.");
+        }
+
+        if (nomeDaCartaHtml === 'Portable') {
+            portableDuracao[idSemPacote] = 4; // 2 rodadas = 4 passagens de turno
+            narrar("🛸 Portable entrou em campo! Por 2 rodadas, ele ataca junto de qualquer carta sua que atacar. Depois a bateria acaba e ele some.");
         }
     }
 
@@ -920,6 +979,10 @@ imagem.onclick = function() {
         else if (modoTraicao === true) executarTraicao(idDoPacote);
         else if (modoLadrao === true && turnoAtivo === 1 && faseLadrao === 2) aplicarRouboBeneficio(idDoPacote);
         else if (modoLadrao === true && turnoAtivo === 2 && faseLadrao === 1) aplicarRouboPrejuizo(idDoPacote);
+        // 🩹 CORREÇÃO: clicar no lado/fase errada durante o roubo do Ladrão "vazava" pra ação
+        // padrão (ex: atacar) em vez de avisar — o roubo continuava ativo escondido, e várias
+        // vezes seguidas parecia que a passiva tinha "travado". Agora só avisa e mantém o roubo.
+        else if (modoLadrao === true) narrar("❌ Alvo inválido para o Ladrão! Clique na carta certa pra continuar o roubo.");
         else if (modoAtaqueInimigo === true) aplicarDanoInimigo(idDoPacote);
         else if (modoAlvoBarrilBarbaro === true || modoAlvoBarrilBarbaroInimigo === true) aplicarAlvoBarrilBarbaro(idDoPacote);
         else if (modoCura === true) aplicarCuraAliada(idDoPacote);
@@ -967,9 +1030,15 @@ function jogarCartaInimigo(idDoPacote) {
     return usarHabilidade("Poção de Gelo", idSemPacote, null); // Ativa o poder direto da mão!
 }
     if (textoBusca.includes("besta")) return ativarSuporte("Besta", idSemPacote);
+    if (textoBusca.includes("auvex")) return ativarSuporte("Auvex", idSemPacote);
     if (textoBusca.includes("velux") || textoBusca.includes("veluz")) return ativarSuporte("Velux", idSemPacote);
     if (textoBusca.includes("adiv")) return ativarSuporte("Adiv", idSemPacote);
     if (textoBusca.includes("recuperida")) return ativarSuporte("Recuperida", idSemPacote);
+    if (textoBusca.includes("plus life")) return ativarSuporte("PlusLife", idSemPacote);
+    if (textoBusca.includes("reviverta")) return usarReviverta(idSemPacote, false);
+    if (textoBusca.includes("cracker")) return usarCracker(idSemPacote, false);
+    if (textoBusca.includes("allsforms")) return usarAllsforms(idSemPacote, false);
+    if (textoBusca.includes("dupliquetion")) return usarDupliquetion(idSemPacote, false);
     if (textoBusca.includes("traição") || textoBusca.includes("traicao")) return ativarSuporte("Traicao", idSemPacote);
     if (textoBusca.includes("escudo")) return ativarSuporte("Escudo", idSemPacote);
     if (textoBusca.includes("fogueira")) return usarFogueira(idSemPacote, "j2");
@@ -1004,6 +1073,11 @@ function jogarCartaInimigo(idDoPacote) {
 
         if (nomeDaCartaHtml === 'Incendiário') {
             narrar("🔥 Incendiário inimigo entrou em campo! Ele vai jogar a pólvora quando houver um alvo na arena.");
+        }
+
+        if (nomeDaCartaHtml === 'Portable') {
+            portableDuracao[idSemPacote] = 4; // 2 rodadas = 4 passagens de turno
+            narrar("🛸 Portable inimigo entrou em campo! Por 2 rodadas, ele ataca junto de qualquer carta do time dele que atacar. Depois a bateria acaba e ele some.");
         }
     }
     
@@ -1045,6 +1119,9 @@ function jogarCartaInimigo(idDoPacote) {
         if (modoTraicao === true) { executarTraicao(idDoPacote); return; }
         else if (modoLadrao === true && turnoAtivo === 1 && faseLadrao === 1) aplicarRouboPrejuizo(idDoPacote);
         else if (modoLadrao === true && turnoAtivo === 2 && faseLadrao === 2) aplicarRouboBeneficio(idDoPacote);
+        // 🩹 CORREÇÃO: mesmo problema do outro lado — clicar no alvo errado durante o roubo
+        // vazava pra outra ação em vez de avisar, deixando o roubo pendurado escondido.
+        else if (modoLadrao === true) narrar("❌ Alvo inválido para o Ladrão! Clique na carta certa pra continuar o roubo.");
         else if (modoCuraInimigo === true) aplicarCuraInimiga(idDoPacote);
         else if (modoAlvoBarrilBarbaro === true || modoAlvoBarrilBarbaroInimigo === true) aplicarAlvoBarrilBarbaro(idDoPacote);
         else if (modoRouboGoblin === true) aplicarRouboDanoGoblin(idDoPacote); 
@@ -1245,7 +1322,10 @@ function iniciarAtaque(nomeCarta, idUnico) {
             let dado = Math.floor(Math.random() * 6) + 1;
             document.getElementById("dado-tela").innerText = "🎲 " + dado;
             if (dado === 2) {
-                let escolha = confirm(`🎲 PASSIVA DO ${nomeTexto.toUpperCase()}! Você tirou 2 no dado!\n\n[ OK ] = Dar 4 de dano de uma só vez neste alvo.\n[ CANCELAR ] = Dar apenas 2 de dano agora e ganhar um Ataque Extra livre.`);
+                // 🤖 Se for o bot jogando, pula o pop-up (ele travaria esperando clique humano)
+                // e sempre escolhe o 2º caminho: 2 de dano agora + 1 ataque extra de graça.
+                let ehDecisaoDoBot = (typeof window !== "undefined" && window.__rpgBotJogando === true);
+                let escolha = ehDecisaoDoBot ? false : confirm(`🎲 PASSIVA DO ${nomeTexto.toUpperCase()}! Você tirou 2 no dado!\n\n[ OK ] = Dar 4 de dano de uma só vez neste alvo.\n[ CANCELAR ] = Dar apenas 2 de dano agora e ganhar um Ataque Extra livre.`);
                 if (escolha) { danoPreparado = 4; goblinAtaquesGanhos[idUnico] = false; narrar(`🎲 O ${nomeTexto} concentrou força! Causará 4 de dano num golpe único e passará a vez!`); } 
                 else { goblinAtaquesGanhos[idUnico] = true; danoPreparado = 2; narrar(`🎲 O ${nomeTexto} ativou a agilidade! Dará 2 de dano agora e terá direito a mais um ataque!`); }
             } else { goblinAtaquesGanhos[idUnico] = false; narrar(`🎲 O ${nomeTexto} tirou ${dado}. Apenas um ataque normal de ${danoPreparado} de dano.`); }
@@ -1316,7 +1396,10 @@ function receberAtaque(idVidaAlvo, idPacoteAlvo) {
         }
 
         let textoVida = document.getElementById(idVidaAlvo);
-        let vidaAtual = parseInt(textoVida.innerText) - danoPreparado;
+        // 🩹 CORREÇÃO: era parseInt, que truncava vida fracionária (ex: 0.75 virava 0) — o jogo
+        // tem cartas com valores quebrados (Barril de Goblin, fogo do Bumerskeleton -0.25...),
+        // e isso fazia o cálculo do dano sair errado ao atacar essas cartas.
+        let vidaAtual = parseFloat(textoVida.innerText) - danoPreparado;
         textoVida.innerText = vidaAtual;
         
         try {
@@ -1343,6 +1426,7 @@ function receberAtaque(idVidaAlvo, idPacoteAlvo) {
             }
 
             narrar("BUM! O alvo inimigo foi DESTRUÍDO!");
+            registrarMorte(nomeDestaCarta, "j2");
             pacoteAlvo.remove();
 
             // 💀 PASSIVA ORK
@@ -1375,6 +1459,11 @@ function receberAtaque(idVidaAlvo, idPacoteAlvo) {
                 aplicarDanoAtaqueArea(idPacoteAlvo, danoSeparado, false);
             }
         }
+
+        // 🦇 VAMPI7 — ataca junto de qualquer carta do mesmo time que atacar.
+        dispararVampi7JuntoDoAtaque(ultimoIdQueAtacou, idPacoteAlvo);
+        // 🛸 PORTABLE — ataca junto enquanto a bateria durar.
+        dispararPortableJuntoDoAtaque(ultimoIdQueAtacou, idPacoteAlvo);
 
         modoAtaque = false; 
         danoPreparado = 0; 
@@ -1578,6 +1667,7 @@ function aplicarDanoInimigo(idPacoteAlvo) {
         }
 
         narrar("Sua carta foi DESTRUÍDA pelo oponente!");
+        registrarMorte(nomeDestaCarta, "j1");
         pacoteAlvo.remove();
 
         // 💀 PASSIVA ORK
@@ -1608,6 +1698,11 @@ function aplicarDanoInimigo(idPacoteAlvo) {
         }
     }
 
+    // 🦇 VAMPI7 — ataca junto de qualquer carta do mesmo time que atacar.
+    dispararVampi7JuntoDoAtaque(ultimoIdQueAtacou, idPacoteAlvo);
+    // 🛸 PORTABLE — ataca junto enquanto a bateria durar.
+    dispararPortableJuntoDoAtaque(ultimoIdQueAtacou, idPacoteAlvo);
+
     modoAtaqueInimigo = false; 
     danoInimigoPreparado = 0;
 
@@ -1635,16 +1730,21 @@ function atualizarTodosUnidoes() {
 
 function atualizarUnidoesNoCampo(campoHTML) {
     let todasAsCartas = Array.from(campoHTML.querySelectorAll("div[id^='pacote-']"));
-    
-    let unidoes = todasAsCartas.filter(pacote => {
+
+    // 🩹 CORREÇÃO: o Ctrl C/V que copia a passiva do Unidão NUNCA muda o nome exibido na
+    // tela (continua "Ctrl C"/"Ctrl V") — a identidade copiada fica só no objeto ctrlV[idUnico].
+    // A checagem antiga só olhava o nome exibido (e ainda procurava por "Ctrl V (Unidão)", uma
+    // string que não é usada em lugar nenhum do jogo), então o Ctrl C nunca recebia o bônus do
+    // Unidão mesmo depois de copiar a passiva dele. Agora também conta quem copiou "Unidão".
+    let ehUnidao = function (pacote) {
         let nome = pacote.querySelector(".nome-carta").innerText;
-        return nome === "Unidão" || nome === "Ctrl V (Unidão)";
-    });
-    
-    let outrasCartas = todasAsCartas.filter(pacote => {
-        let nome = pacote.querySelector(".nome-carta").innerText;
-        return nome !== "Unidão" && nome !== "Ctrl V (Unidão)";
-    });
+        if (nome === "Unidão") return true;
+        let idUnico = pacote.id.replace("pacote-", "");
+        return !!(typeof ctrlV !== 'undefined' && ctrlV[idUnico] && ctrlV[idUnico].nomeOriginal === "Unidão");
+    };
+
+    let unidoes = todasAsCartas.filter(ehUnidao);
+    let outrasCartas = todasAsCartas.filter(pacote => !ehUnidao(pacote));
 
     // 1. Acha o MAIOR dano entre as outras cartas
     let maiorDano = 0;
@@ -1683,6 +1783,93 @@ function atualizarUnidoesNoCampo(campoHTML) {
 // função CHECA o escudo do Guerreiro pra cada alvo individualmente: se aquele alvo
 // específico estiver escudado, o golpe dele é anulado e o escudo quebra — mas os OUTROS
 // alvos da mesma área continuam recebendo dano normalmente.
+// 🦇 VAMPI7 — sempre que QUALQUER carta do mesmo dono ataca, todo Vampi7 desse time
+// ataca junto no MESMO alvo (sem precisar de parceira fixa, ao contrário do Separado) e
+// ganha 1 de vida por ter atacado, mesmo que o dano dela ainda seja 0.
+function dispararVampi7JuntoDoAtaque(idAtacante, idPacoteAlvo) {
+    let pacoteAtacante = document.getElementById("pacote-" + idAtacante);
+    if (!pacoteAtacante) return;
+
+    let campoDoAtacanteId = pacoteAtacante.closest("#campo-j1") ? "campo-j1" : "campo-j2";
+    let classeMesmoTime = (campoDoAtacanteId === "campo-j1") ? "carta-aliada" : "carta-inimiga";
+    let campoDoAtacante = document.getElementById(campoDoAtacanteId);
+    if (!campoDoAtacante) return;
+
+    let ehAtaqueDoLadoInimigo = (campoDoAtacanteId === "campo-j2"); // mesma convenção de aplicarDanoAtaqueArea
+
+    let vampiros = Array.from(campoDoAtacante.getElementsByClassName(classeMesmoTime)).filter(pacote => {
+        let nomeEl = pacote.querySelector(".nome-carta");
+        return nomeEl && nomeEl.innerText.trim() === "Vampi7" && pacote.id !== "pacote-" + idAtacante;
+    });
+    if (vampiros.length === 0) return;
+
+    vampiros.forEach(pacoteVampi => {
+        let idVampi = pacoteVampi.id.replace("pacote-", "");
+        let alvoAindaExiste = !!document.getElementById(idPacoteAlvo);
+
+        let txtDanoVampi = document.getElementById("dano-" + idVampi);
+        let danoVampi = txtDanoVampi ? parseFloat(txtDanoVampi.innerText) || 0 : 0;
+        if (danoVampi > 0 && alvoAindaExiste) {
+            aplicarDanoAtaqueArea(idPacoteAlvo, danoVampi, ehAtaqueDoLadoInimigo);
+        }
+
+        // 🦇 A cura acontece SEMPRE que ela ataca junto, mesmo se o alvo já tiver morrido
+        // com o golpe principal antes dela — "ao atacar" não depende do alvo sobreviver.
+        let txtVidaVampi = document.getElementById("vida-" + idVampi);
+        if (txtVidaVampi) {
+            txtVidaVampi.innerText = (parseFloat(txtVidaVampi.innerText) || 0) + 1;
+            if (typeof mostrarEfeitoVida === "function") mostrarEfeitoVida(idVampi, "ganhou");
+        }
+
+        narrar(`🦇 Vampi7 atacou junto${(danoVampi > 0 && alvoAindaExiste) ? ` (${danoVampi} de dano no mesmo alvo)` : ""} e recuperou 1 de vida!`);
+    });
+}
+
+// 🛸 PORTABLE — enquanto a bateria durar (2 rodadas = 4 passagens de turno, contadas em
+// portableDuracao), sempre que QUALQUER carta do mesmo dono ataca, todo Portable desse time
+// ataca junto no MESMO alvo — igual ao Vampi7, mas com prazo de validade em vez de ser permanente.
+function dispararPortableJuntoDoAtaque(idAtacante, idPacoteAlvo) {
+    let pacoteAtacante = document.getElementById("pacote-" + idAtacante);
+    if (!pacoteAtacante) return;
+
+    let campoDoAtacanteId = pacoteAtacante.closest("#campo-j1") ? "campo-j1" : "campo-j2";
+    let classeMesmoTime = (campoDoAtacanteId === "campo-j1") ? "carta-aliada" : "carta-inimiga";
+    let campoDoAtacante = document.getElementById(campoDoAtacanteId);
+    if (!campoDoAtacante) return;
+
+    let ehAtaqueDoLadoInimigo = (campoDoAtacanteId === "campo-j2");
+
+    let portables = Array.from(campoDoAtacante.getElementsByClassName(classeMesmoTime)).filter(pacote => {
+        let nomeEl = pacote.querySelector(".nome-carta");
+        let idP = pacote.id.replace("pacote-", "");
+        return nomeEl && nomeEl.innerText.trim() === "Portable" && pacote.id !== "pacote-" + idAtacante && portableDuracao[idP] > 0;
+    });
+    if (portables.length === 0) return;
+
+    portables.forEach(pacotePortable => {
+        let idPortable = pacotePortable.id.replace("pacote-", "");
+        let alvoAindaExiste = !!document.getElementById(idPacoteAlvo);
+
+        let txtDanoPortable = document.getElementById("dano-" + idPortable);
+        let danoPortable = txtDanoPortable ? parseFloat(txtDanoPortable.innerText) || 0 : 0;
+        if (danoPortable > 0 && alvoAindaExiste) {
+            aplicarDanoAtaqueArea(idPacoteAlvo, danoPortable, ehAtaqueDoLadoInimigo);
+        }
+
+        narrar(`🛸 Portable atacou junto${(danoPortable > 0 && alvoAindaExiste) ? ` (${danoPortable} de dano no mesmo alvo)` : ""}!`);
+    });
+}
+
+// 💀 CEMITÉRIO — registra uma carta morta (nome de exibição + lado) pra Reviverta poder
+// trazer ela de volta depois. Só entra no cemitério quem tem uma entrada correspondente no
+// bancoDeCartas (formas especiais sem carta própria, tipo Ícaro/Thiago do Criador, ficam de fora).
+function registrarMorte(nomeCarta, lado) {
+    if (!nomeCarta || (lado !== "j1" && lado !== "j2")) return;
+    let base = bancoDeCartas.find(c => c.nome === nomeCarta);
+    if (!base) return;
+    cemiterio[lado].push({ id: base.id, nome: base.nome, img: base.img, vida: base.vida, dano: base.dano });
+}
+
 function aplicarDanoAtaqueArea(idPacoteAlvo, dano, isInimigo) {
     let idPuro = idPacoteAlvo.replace("pacote-", "");
     if (typeof escudoGuerreiro !== 'undefined' && escudoGuerreiro[idPuro]) {
@@ -1809,7 +1996,11 @@ function aplicarDanoCavaloDeTroia(ladoInimigo, dano) {
             let vidaAtual = parseFloat(txtVida.innerText) - dano;
             txtVida.innerText = vidaAtual;
             if (typeof mostrarEfeitoPerdaVida === "function") mostrarEfeitoPerdaVida(idPuro);
-            if (vidaAtual <= 0) pacote.remove();
+            if (vidaAtual <= 0) {
+                let nomeCartaMao = pacote.querySelector(".nome-carta") ? pacote.querySelector(".nome-carta").innerText.trim() : "";
+                registrarMorte(nomeCartaMao, ladoInimigo);
+                pacote.remove();
+            }
         });
     }
 }
@@ -1836,6 +2027,7 @@ function aplicarDanoDireto(idPacoteAlvo, dano, isInimigo) {
         // ele não tem um significado consistente entre quem chama esta função, então usar
         // ele pra decidir o lado dos Goblins invocados dava resultado errado às vezes.
         let campoDestino = pacote.closest("#campo-j2") ? "campo-j2" : "campo-j1";
+        registrarMorte(nomeDestaCarta, campoDestino === "campo-j2" ? "j2" : "j1");
         pacote.remove();
         
         if (nomeDestaCarta === "Ork") {
@@ -1965,8 +2157,19 @@ function aplicarAjusteThiago(idPacoteAlvo) {
     if (!pacoteAlvo) return;
     let idPuro = idPacoteAlvo.replace("pacote-", "");
 
-    let ajustarVida = confirm("Qual atributo ajustar?\n\n[ OK ] = VIDA\n[ CANCELAR ] = DANO");
-    let aumentar = confirm("Aumentar ou diminuir em 1?\n\n[ OK ] = Aumentar (+1)\n[ CANCELAR ] = Diminuir (-1)");
+    // 🤖 Se for o BOT decidindo (não um humano jogando, nem mesmo o Jogador 2 manual no
+    // PvP local), pula os pop-ups de confirm() — eles travariam esperando um clique que
+    // nunca vem — e sempre enfraquece o alvo tirando 1 de DANO (o alvo já é a maior
+    // ameaça escolhida em botResolverEscolhaPendente).
+    let ehDecisaoDoBot = (typeof window !== "undefined" && window.__rpgBotJogando === true);
+    let ajustarVida, aumentar;
+    if (ehDecisaoDoBot) {
+        ajustarVida = false;
+        aumentar = false;
+    } else {
+        ajustarVida = confirm("Qual atributo ajustar?\n\n[ OK ] = VIDA\n[ CANCELAR ] = DANO");
+        aumentar = confirm("Aumentar ou diminuir em 1?\n\n[ OK ] = Aumentar (+1)\n[ CANCELAR ] = Diminuir (-1)");
+    }
 
     let isInimigo = pacoteAlvo.closest("#campo-j2") !== null;
 
@@ -2162,6 +2365,11 @@ function aplicarAlvoBarril(idPacoteAlvo, viaEspecial) {
             aplicarDanoAtaqueArea(vizinho.id, danoImpactoVizinhos, isInimigoParaOJogo);
         });
         if (vizinhos.length > 0) narrar(`💥 O impacto também atingiu as cartas vizinhas, causando ${danoImpactoVizinhos} de dano em cada!`);
+
+        // 🦇 VAMPI7 — esse impacto conta como um ataque de verdade também.
+        dispararVampi7JuntoDoAtaque(idBarrilPuro, idPacoteAlvo);
+        // 🛸 PORTABLE — ataca junto enquanto a bateria durar.
+        dispararPortableJuntoDoAtaque(idBarrilPuro, idPacoteAlvo);
     }
 
     idBarrilAtivo = null;
@@ -2235,6 +2443,29 @@ function equiparSuporte(idAlvo) {
             mostrarEfeitoAtaque(idAlvo);
         
         narrar(`🏹 A Besta foi equipada em [${nomeAlvo}]! O dano base subiu para ${danoAtual + bonus}.`);
+        suportePreparado = null;
+    }
+
+    // --- REGRA DA AUVEX ---
+    if (suportePreparado === 'Auvex') {
+        let itemNaMaoAuvex = document.getElementById("pacote-" + idItemNaMao);
+        if (!itemNaMaoAuvex) return;
+
+        let quemJogouAuvex = itemNaMaoAuvex.parentElement ? itemNaMaoAuvex.parentElement.id : "";
+        let alvoNoCampo1Auvex = pacoteAlvo.closest("#campo-j1") !== null;
+        let alvoNoCampo2Auvex = pacoteAlvo.closest("#campo-j2") !== null;
+
+        if ((quemJogouAuvex.includes("j1") && !alvoNoCampo1Auvex) || (quemJogouAuvex.includes("j2") && !alvoNoCampo2Auvex)) {
+            return narrar("❌ Alvo inválido! A Auvex só pode ser equipada em cartas ALIADAS.");
+        }
+
+        if (danoElemento) danoElemento.innerText = danoAtual + 1;
+
+        itemNaMaoAuvex.remove();
+
+        mostrarEfeitoAtaque(idAlvo);
+
+        narrar(`⚡ Auvex equipada em [${nomeAlvo}]! O dano subiu pra ${danoAtual + 1}, de forma PERMANENTE.`);
         suportePreparado = null;
     }
 
@@ -2314,6 +2545,34 @@ function equiparSuporte(idAlvo) {
         suportePreparado = null;
     }
 
+    // --- REGRA DA PLUS LIFE ---
+    if (suportePreparado === 'PlusLife') {
+        let itemNaMaoPlusLife = document.getElementById("pacote-" + idItemNaMao);
+        if (!itemNaMaoPlusLife) return;
+
+        let quemJogouPlusLife = itemNaMaoPlusLife.parentElement ? itemNaMaoPlusLife.parentElement.id : "";
+        let alvoNoCampo1PlusLife = pacoteAlvo.closest("#campo-j1") !== null;
+        let alvoNoCampo2PlusLife = pacoteAlvo.closest("#campo-j2") !== null;
+
+        if ((quemJogouPlusLife.includes("j1") && !alvoNoCampo1PlusLife) || (quemJogouPlusLife.includes("j2") && !alvoNoCampo2PlusLife)) {
+            return narrar("❌ Alvo inválido! A Plus Life só pode ser usada em cartas ALIADAS.");
+        }
+
+        itemNaMaoPlusLife.remove();
+
+        let txtVidaPlusLife = document.getElementById("vida-" + idAlvo);
+        if (txtVidaPlusLife) {
+            let vidaAtualPlusLife = parseFloat(txtVidaPlusLife.innerText);
+            txtVidaPlusLife.innerText = vidaAtualPlusLife + 2;
+
+            // 🚨 EFEITO DE VIDA AQUI: Sobe 3 corações em cascata, pra destacar que curou mais que a Recuperida
+            mostrarEfeitoVida(idAlvo, "recuperou");
+
+            narrar(`💚 Plus Life usada! [${nomeAlvo}] ganhou 2 de vida.`);
+        }
+        suportePreparado = null;
+    }
+
     // --- REGRA DA TRAIÇÃO (PASSO 1: Escolher o Traidor) ---
     if (suportePreparado === 'Traicao') {
         let itemNaMao = document.getElementById("pacote-" + idItemNaMao);
@@ -2347,17 +2606,451 @@ function ativarSuporte(nomeOriginal, idItem) {
     
     if (nomeOriginal === 'Besta') {
         narrar(`⚡ AÇÃO RÁPIDA: Besta engatilhada! Clique na IMAGEM de uma tropa na arena.`);
+    } else if (nomeOriginal === 'Auvex') {
+        narrar(`⚡ Auvex engatilhada! Clique na imagem de uma tropa ALIADA pra ela ganhar +1 de ataque PERMANENTE.`);
     } else if (nomeOriginal === 'Velux') {
         narrar(`✨ Poção Velux preparada! Pode ser usada a qualquer momento!`);
     } else if (nomeOriginal === 'Adiv') {
         narrar(`🧪 Splash! Poção Adiv engatilhada! Clique em QUALQUER carta na arena para tirar 1 de vida.`);
     } else if (nomeOriginal === 'Recuperida') {
         narrar(`🧪 MODO CURA: Poção Recuperida engatilhada! Clique na imagem de uma criatura ALIADA para curar 1 de vida.`);
+    } else if (nomeOriginal === 'PlusLife') {
+        narrar(`💚 Plus Life engatilhada! Clique na imagem de uma criatura ALIADA para ela ganhar 2 de vida.`);
     } else if (nomeOriginal === 'Traicao') {
         narrar(`🧪 Poção da Traição engatilhada! Clique em uma carta INIMIGA para ela se voltar contra o próprio time.`);
     } else if (nomeOriginal === 'Escudo') {
         narrar(`🛡️ Escudo preparado! Clique numa carta ALIADA que não seja suporte/poção — ela fica imune ao próximo ataque que sofrer.`);
     }
+}
+
+// 💀 REVIVERTA — em vez de clicar num alvo em campo (como as outras poções), abre o
+// cemitério dos dois lados como miniaturas clicáveis. A carta escolhida (sua ou do
+// oponente) volta com os atributos ORIGINAIS de fábrica, direto pra mão de quem usou.
+function usarReviverta(idItem, ehAliado) {
+    if (cemiterio.j1.length === 0 && cemiterio.j2.length === 0) {
+        return narrar("💀 Ainda não há nenhuma carta morta pra reviver!");
+    }
+    revivertaPendente = { idItem, ehAliado };
+    mostrarCemiterioReviverta(idItem, ehAliado);
+}
+
+function mostrarCemiterioReviverta(idItem, ehAliado) {
+    let antigo = document.getElementById("overlay-cemiterio");
+    if (antigo) antigo.remove();
+
+    let overlay = document.createElement("div");
+    overlay.id = "overlay-cemiterio";
+    overlay.style.cssText = "position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:9999; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:20px; padding:20px; box-sizing:border-box; overflow:auto; font-family:'Georgia', serif;";
+
+    let titulo = document.createElement("h2");
+    titulo.innerText = "💀 Reviverta — escolha uma carta pra trazer de volta";
+    titulo.style.cssText = "color: var(--borda-ouro, #d4af37); text-align:center; margin:0;";
+    overlay.appendChild(titulo);
+
+    function criarColuna(rotulo, lado) {
+        let col = document.createElement("div");
+        col.style.cssText = "display:flex; flex-direction:column; align-items:center; gap:10px; width:100%; max-width:700px;";
+
+        let h = document.createElement("h3");
+        h.innerText = rotulo;
+        h.style.cssText = "color: var(--borda-ouro, #d4af37); margin: 5px 0;";
+        col.appendChild(h);
+
+        let linha = document.createElement("div");
+        linha.style.cssText = "display:flex; flex-wrap:wrap; gap:10px; justify-content:center; width:100%;";
+
+        if (cemiterio[lado].length === 0) {
+            let vazio = document.createElement("p");
+            vazio.innerText = "Nenhuma carta morta aqui ainda.";
+            vazio.style.cssText = "color:#ccc; font-style:italic;";
+            linha.appendChild(vazio);
+        } else {
+            cemiterio[lado].forEach((carta, index) => {
+                let mini = document.createElement("div");
+                mini.style.cssText = "width:100px; background: var(--bg-carta, #f4eedb); border:3px solid var(--borda-carta, #8c6d4f); border-radius:8px; padding:6px; text-align:center; cursor:pointer;";
+                mini.innerHTML = `
+                    <div style="font-size:0.75rem; font-weight:bold; color:#2c2520; margin-bottom:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${carta.nome}</div>
+                    <img src="${carta.img}" style="width:100%; height:60px; object-fit:contain; border-radius:4px;">
+                    <div style="font-size:0.75rem; color:#2c2520; margin-top:3px;">❤️${carta.vida} ⚔️${carta.dano}</div>
+                `;
+                mini.onclick = function () {
+                    reviverCartaDoCemiterio(lado, index, idItem, ehAliado);
+                };
+                linha.appendChild(mini);
+            });
+        }
+
+        col.appendChild(linha);
+        return col;
+    }
+
+    overlay.appendChild(criarColuna("💀 Cemitério Aliado", ehAliado ? "j1" : "j2"));
+    overlay.appendChild(criarColuna("💀 Cemitério Inimigo", ehAliado ? "j2" : "j1"));
+
+    let btnCancelar = document.createElement("button");
+    btnCancelar.innerText = "Cancelar";
+    btnCancelar.onclick = function () { revivertaPendente = null; overlay.remove(); };
+    overlay.appendChild(btnCancelar);
+
+    document.body.appendChild(overlay);
+}
+
+function reviverCartaDoCemiterio(lado, index, idItem, ehAliado) {
+    let dadosCarta = cemiterio[lado][index];
+    if (!dadosCarta) return;
+
+    cemiterio[lado].splice(index, 1);
+
+    let idMaoHTML = ehAliado ? "mao-j1" : "mao-j2";
+    let funcaoJogar = ehAliado ? "jogarCarta" : "jogarCartaInimigo";
+    let classeCss = ehAliado ? "carta-aliada" : "carta-inimiga-espera";
+
+    // 🩹 CORREÇÃO: o ID precisa conter "inimigo" quando vai pra mão do oponente — é assim que
+    // o resto do jogo (equiparSuporte, etc.) sabe de quem é a carta. Sem isso, suportes revividos
+    // pro lado do bot davam "Ação inválida" na hora de usar.
+    let idUnico = dadosCarta.id + (ehAliado ? "-revivida-" : "-inimigo-revivida-") + Math.floor(Math.random() * 100000);
+    let novaCarta = { ...dadosCarta, idUnico: idUnico };
+
+    let htmlDaCarta = criarHTMLCarta(novaCarta, funcaoJogar, classeCss, ehAliado);
+    let divMao = document.getElementById(idMaoHTML);
+    if (divMao) divMao.insertAdjacentHTML('beforeend', htmlDaCarta);
+
+    let pacoteItem = document.getElementById("pacote-" + idItem);
+    if (pacoteItem) pacoteItem.remove();
+
+    let overlay = document.getElementById("overlay-cemiterio");
+    if (overlay) overlay.remove();
+    revivertaPendente = null;
+
+    narrar(`✨ Reviverta! [${dadosCarta.nome}] voltou dos mortos com os atributos originais (❤️${dadosCarta.vida} ⚔️${dadosCarta.dano}) e foi para a mão ${ehAliado ? "aliada" : "do oponente"}.`);
+}
+
+// 🃏 CRACKER — mostra a Mão e o Campo do ADVERSÁRIO como miniaturas clicáveis. Rouba a carta
+// escolhida direto pra sua própria mão: se veio do campo, reseta pros atributos originais de
+// fábrica (ela "recomeça do zero" pra você); se veio da mão, mantém como estava.
+function usarCracker(idItem, ehAliado) {
+    let ladoOponente = ehAliado ? "j2" : "j1";
+    let temAlvoMao = document.querySelectorAll(`#mao-${ladoOponente} div[id^='pacote-']`).length > 0;
+    let temAlvoCampo = document.querySelectorAll(`#campo-${ladoOponente} div[id^='pacote-']`).length > 0;
+
+    if (!temAlvoMao && !temAlvoCampo) {
+        return narrar("🃏 O adversário não tem nenhuma carta na mão nem em campo pra roubar!");
+    }
+
+    crackerPendente = { idItem, ehAliado };
+    mostrarRouboCracker(idItem, ehAliado);
+}
+
+function mostrarRouboCracker(idItem, ehAliado) {
+    let antigo = document.getElementById("overlay-cracker");
+    if (antigo) antigo.remove();
+
+    let ladoOponente = ehAliado ? "j2" : "j1";
+
+    let overlay = document.createElement("div");
+    overlay.id = "overlay-cracker";
+    overlay.style.cssText = "position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:9999; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:20px; padding:20px; box-sizing:border-box; overflow:auto; font-family:'Georgia', serif;";
+
+    let titulo = document.createElement("h2");
+    titulo.innerText = "🃏 Cracker — escolha uma carta do adversário pra roubar";
+    titulo.style.cssText = "color: var(--borda-ouro, #d4af37); text-align:center; margin:0;";
+    overlay.appendChild(titulo);
+
+    function extrairDadosCarta(pacote) {
+        let idPuro = pacote.id.replace("pacote-", "");
+        let nomeEl = pacote.querySelector(".nome-carta");
+        let imgEl = pacote.querySelector("img");
+        let vidaEl = document.getElementById("vida-" + idPuro);
+        let danoEl = document.getElementById("dano-" + idPuro);
+        return {
+            nome: nomeEl ? nomeEl.innerText.trim() : "",
+            img: imgEl ? imgEl.getAttribute("src") : "",
+            vida: vidaEl ? vidaEl.innerText : "0",
+            dano: danoEl ? danoEl.innerText : "0",
+        };
+    }
+
+    function criarColuna(rotulo, seletor, origem) {
+        let col = document.createElement("div");
+        col.style.cssText = "display:flex; flex-direction:column; align-items:center; gap:10px; width:100%; max-width:700px;";
+
+        let h = document.createElement("h3");
+        h.innerText = rotulo;
+        h.style.cssText = "color: var(--borda-ouro, #d4af37); margin: 5px 0;";
+        col.appendChild(h);
+
+        let linha = document.createElement("div");
+        linha.style.cssText = "display:flex; flex-wrap:wrap; gap:10px; justify-content:center; width:100%;";
+
+        let pacotes = Array.from(document.querySelectorAll(seletor));
+        if (pacotes.length === 0) {
+            let vazio = document.createElement("p");
+            vazio.innerText = "Nenhuma carta aqui.";
+            vazio.style.cssText = "color:#ccc; font-style:italic;";
+            linha.appendChild(vazio);
+        } else {
+            pacotes.forEach(pacote => {
+                let dados = extrairDadosCarta(pacote);
+                let mini = document.createElement("div");
+                mini.style.cssText = "width:100px; background: var(--bg-carta, #f4eedb); border:3px solid var(--borda-carta, #8c6d4f); border-radius:8px; padding:6px; text-align:center; cursor:pointer;";
+                mini.innerHTML = `
+                    <div style="font-size:0.75rem; font-weight:bold; color:#2c2520; margin-bottom:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${dados.nome}</div>
+                    <img src="${dados.img}" style="width:100%; height:60px; object-fit:contain; border-radius:4px;">
+                    <div style="font-size:0.75rem; color:#2c2520; margin-top:3px;">❤️${dados.vida} ⚔️${dados.dano}</div>
+                `;
+                mini.onclick = function () {
+                    roubarCartaCracker(pacote.id, origem, idItem, ehAliado);
+                };
+                linha.appendChild(mini);
+            });
+        }
+
+        col.appendChild(linha);
+        return col;
+    }
+
+    overlay.appendChild(criarColuna("✋ Mão do Adversário", `#mao-${ladoOponente} div[id^='pacote-']`, "mao"));
+    overlay.appendChild(criarColuna("⚔️ Campo do Adversário", `#campo-${ladoOponente} div[id^='pacote-']`, "campo"));
+
+    let btnCancelar = document.createElement("button");
+    btnCancelar.innerText = "Cancelar";
+    btnCancelar.onclick = function () { crackerPendente = null; overlay.remove(); };
+    overlay.appendChild(btnCancelar);
+
+    document.body.appendChild(overlay);
+}
+
+function roubarCartaCracker(idPacoteDomOriginal, origem, idItem, ehAliado) {
+    let pacoteOriginal = document.getElementById(idPacoteDomOriginal);
+    if (!pacoteOriginal) return;
+
+    let idPuro = idPacoteDomOriginal.replace("pacote-", "");
+    let nomeCarta = pacoteOriginal.querySelector(".nome-carta").innerText.trim();
+    let vidaAtual = document.getElementById("vida-" + idPuro) ? document.getElementById("vida-" + idPuro).innerText : "0";
+    let danoAtual = document.getElementById("dano-" + idPuro) ? document.getElementById("dano-" + idPuro).innerText : "0";
+    let imgAtual = pacoteOriginal.querySelector("img") ? pacoteOriginal.querySelector("img").getAttribute("src") : "";
+
+    let base = bancoDeCartas.find(c => c.nome === nomeCarta);
+
+    let dadosNovaCarta;
+    if (origem === "campo" && base) {
+        // 🃏 Roubada do CAMPO — reseta pros atributos originais de fábrica.
+        dadosNovaCarta = { id: base.id, nome: base.nome, img: base.img, vida: base.vida, dano: base.dano };
+    } else {
+        // ✋ Roubada da MÃO — mantém como estava.
+        dadosNovaCarta = { id: base ? base.id : idPuro, nome: nomeCarta, img: imgAtual, vida: vidaAtual, dano: danoAtual };
+    }
+
+    pacoteOriginal.remove();
+
+    let idMaoHTML = ehAliado ? "mao-j1" : "mao-j2";
+    let funcaoJogar = ehAliado ? "jogarCarta" : "jogarCartaInimigo";
+    let classeCss = ehAliado ? "carta-aliada" : "carta-inimiga-espera";
+
+    // 🩹 CORREÇÃO: mesma marcação de lado no ID (ver comentário na Reviverta).
+    let idUnico = dadosNovaCarta.id + (ehAliado ? "-roubada-" : "-inimigo-roubada-") + Math.floor(Math.random() * 100000);
+    let novaCarta = { ...dadosNovaCarta, idUnico: idUnico };
+
+    let htmlDaCarta = criarHTMLCarta(novaCarta, funcaoJogar, classeCss, ehAliado);
+    let divMao = document.getElementById(idMaoHTML);
+    if (divMao) divMao.insertAdjacentHTML('beforeend', htmlDaCarta);
+
+    let pacoteItem = document.getElementById("pacote-" + idItem);
+    if (pacoteItem) pacoteItem.remove();
+
+    let overlay = document.getElementById("overlay-cracker");
+    if (overlay) overlay.remove();
+    crackerPendente = null;
+
+    narrar(`🃏 Cracker! [${nomeCarta}] foi roubado(a) do ${origem === "campo" ? "campo" : "mão"} do adversário${origem === "campo" ? ", voltando com os atributos originais," : ""} e foi pra mão ${ehAliado ? "aliada" : "do oponente"}!`);
+}
+
+// 💥 ALLSFORMS — dá +3 de dano pra TODAS as tropas do próprio time já em campo (suportes/poções
+// que estejam ali, tipo Cavalo de Tróia/Fogueira, não contam), durando 1 rodada (2 passagens de
+// turno). Não precisa escolher alvo, então é resolvido na hora — sem tela nem clique nenhum.
+function usarAllsforms(idItem, ehAliado) {
+    let ladoProprio = ehAliado ? "j1" : "j2";
+    let campoProprio = document.getElementById("campo-" + ladoProprio);
+    let classeCss = ehAliado ? "carta-aliada" : "carta-inimiga";
+
+    let tropas = campoProprio ? Array.from(campoProprio.getElementsByClassName(classeCss)).filter(pacote => {
+        let idPuro = pacote.id.replace("pacote-", "");
+        let infoCarta = bancoDeCartas
+            .filter(c => idPuro === c.id || idPuro.startsWith(c.id + "_") || idPuro.startsWith(c.id + "-"))
+            .sort((a, b) => b.id.length - a.id.length)[0];
+        let ehSuporte = infoCarta && suportesReais.includes(infoCarta.id);
+        return !ehSuporte;
+    }) : [];
+
+    if (tropas.length === 0) {
+        return narrar("💥 Allsforms não encontrou nenhuma tropa em campo pra buffar!");
+    }
+
+    tropas.forEach(pacote => {
+        let idPuro = pacote.id.replace("pacote-", "");
+        let txtDano = document.getElementById("dano-" + idPuro);
+        if (!txtDano) return;
+        let danoAtual = parseFloat(txtDano.innerText) || 0;
+        txtDano.innerText = danoAtual + 3;
+
+        if (!buffsAllsforms[idPuro]) buffsAllsforms[idPuro] = [];
+        buffsAllsforms[idPuro].push({ bonus: 3, restam: 2 }); // 1 rodada = 2 passagens de turno
+    });
+
+    let pacoteItem = document.getElementById("pacote-" + idItem);
+    if (pacoteItem) pacoteItem.remove();
+
+    narrar(`💥 Allsforms! Todas as tropas ${ehAliado ? "aliadas" : "do oponente"} em campo ganharam +3 de dano por 1 rodada!`);
+}
+
+// 🪞 DUPLIQUETION — cria uma CÓPIA de uma carta ESCOLHIDA PELO PRÓPRIO DONO (mão ou campo,
+// nunca do adversário), com metade da vida e do dano atuais (mantém fração, ex: 3 vira 1.5).
+// A carta original continua no lugar, intacta — só nasce uma cópia nova na sua mão.
+// 🧪 Diz se um pacote em tela (mão ou campo) é um suporte/poção (Besta, Escudo, Vampi7 etc.)
+// em vez de uma tropa de verdade — usado pra filtrar quem pode ser alvo de coisas como
+// Allsforms e Dupliquetion.
+function ehPacoteSuporte(pacote) {
+    let idPuro = pacote.id.replace("pacote-", "");
+    let infoCarta = bancoDeCartas
+        .filter(c => idPuro === c.id || idPuro.startsWith(c.id + "_") || idPuro.startsWith(c.id + "-"))
+        .sort((a, b) => b.id.length - a.id.length)[0];
+    return !!(infoCarta && suportesReais.includes(infoCarta.id));
+}
+
+function usarDupliquetion(idItem, ehAliado) {
+    let ladoProprio = ehAliado ? "j1" : "j2";
+    let temAlvoMao = Array.from(document.querySelectorAll(`#mao-${ladoProprio} div[id^='pacote-']`))
+        .filter(p => p.id !== "pacote-" + idItem && !ehPacoteSuporte(p)).length > 0;
+    let temAlvoCampo = Array.from(document.querySelectorAll(`#campo-${ladoProprio} div[id^='pacote-']`))
+        .filter(p => !ehPacoteSuporte(p)).length > 0;
+
+    if (!temAlvoMao && !temAlvoCampo) {
+        return narrar("🪞 Você ainda não tem nenhuma TROPA pra copiar (suportes/poções não podem ser copiados)!");
+    }
+
+    dupliquetionPendente = { idItem, ehAliado };
+    mostrarDupliquetion(idItem, ehAliado);
+}
+
+function mostrarDupliquetion(idItem, ehAliado) {
+    let antigo = document.getElementById("overlay-dupliquetion");
+    if (antigo) antigo.remove();
+
+    let ladoProprio = ehAliado ? "j1" : "j2";
+
+    let overlay = document.createElement("div");
+    overlay.id = "overlay-dupliquetion";
+    overlay.style.cssText = "position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:9999; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:20px; padding:20px; box-sizing:border-box; overflow:auto; font-family:'Georgia', serif;";
+
+    let titulo = document.createElement("h2");
+    titulo.innerText = "🪞 Dupliquetion — escolha uma carta SUA pra copiar";
+    titulo.style.cssText = "color: var(--borda-ouro, #d4af37); text-align:center; margin:0;";
+    overlay.appendChild(titulo);
+
+    function extrairDadosCarta(pacote) {
+        let idPuro = pacote.id.replace("pacote-", "");
+        let nomeEl = pacote.querySelector(".nome-carta");
+        let imgEl = pacote.querySelector("img");
+        let vidaEl = document.getElementById("vida-" + idPuro);
+        let danoEl = document.getElementById("dano-" + idPuro);
+        return {
+            nome: nomeEl ? nomeEl.innerText.trim() : "",
+            img: imgEl ? imgEl.getAttribute("src") : "",
+            vida: vidaEl ? vidaEl.innerText : "0",
+            dano: danoEl ? danoEl.innerText : "0",
+        };
+    }
+
+    function criarColuna(rotulo, pacotes) {
+        let col = document.createElement("div");
+        col.style.cssText = "display:flex; flex-direction:column; align-items:center; gap:10px; width:100%; max-width:700px;";
+
+        let h = document.createElement("h3");
+        h.innerText = rotulo;
+        h.style.cssText = "color: var(--borda-ouro, #d4af37); margin: 5px 0;";
+        col.appendChild(h);
+
+        let linha = document.createElement("div");
+        linha.style.cssText = "display:flex; flex-wrap:wrap; gap:10px; justify-content:center; width:100%;";
+
+        if (pacotes.length === 0) {
+            let vazio = document.createElement("p");
+            vazio.innerText = "Nenhuma carta aqui.";
+            vazio.style.cssText = "color:#ccc; font-style:italic;";
+            linha.appendChild(vazio);
+        } else {
+            pacotes.forEach(pacote => {
+                let dados = extrairDadosCarta(pacote);
+                let mini = document.createElement("div");
+                mini.style.cssText = "width:100px; background: var(--bg-carta, #f4eedb); border:3px solid var(--borda-carta, #8c6d4f); border-radius:8px; padding:6px; text-align:center; cursor:pointer;";
+                mini.innerHTML = `
+                    <div style="font-size:0.75rem; font-weight:bold; color:#2c2520; margin-bottom:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${dados.nome}</div>
+                    <img src="${dados.img}" style="width:100%; height:60px; object-fit:contain; border-radius:4px;">
+                    <div style="font-size:0.75rem; color:#2c2520; margin-top:3px;">❤️${dados.vida} ⚔️${dados.dano}</div>
+                `;
+                mini.onclick = function () {
+                    copiarCartaDupliquetion(pacote.id, idItem, ehAliado);
+                };
+                linha.appendChild(mini);
+            });
+        }
+
+        col.appendChild(linha);
+        return col;
+    }
+
+    let pacotesMao = Array.from(document.querySelectorAll(`#mao-${ladoProprio} div[id^='pacote-']`))
+        .filter(p => p.id !== "pacote-" + idItem && !ehPacoteSuporte(p));
+    let pacotesCampo = Array.from(document.querySelectorAll(`#campo-${ladoProprio} div[id^='pacote-']`))
+        .filter(p => !ehPacoteSuporte(p));
+
+    overlay.appendChild(criarColuna("✋ Sua Mão", pacotesMao));
+    overlay.appendChild(criarColuna("⚔️ Seu Campo", pacotesCampo));
+
+    let btnCancelar = document.createElement("button");
+    btnCancelar.innerText = "Cancelar";
+    btnCancelar.onclick = function () { dupliquetionPendente = null; overlay.remove(); };
+    overlay.appendChild(btnCancelar);
+
+    document.body.appendChild(overlay);
+}
+
+function copiarCartaDupliquetion(idPacoteOriginal, idItem, ehAliado) {
+    let pacoteOriginal = document.getElementById(idPacoteOriginal);
+    if (!pacoteOriginal) return;
+
+    let idPuro = idPacoteOriginal.replace("pacote-", "");
+    let nomeCarta = pacoteOriginal.querySelector(".nome-carta").innerText.trim();
+    let vidaAtual = parseFloat(document.getElementById("vida-" + idPuro) ? document.getElementById("vida-" + idPuro).innerText : 0) || 0;
+    let danoAtual = parseFloat(document.getElementById("dano-" + idPuro) ? document.getElementById("dano-" + idPuro).innerText : 0) || 0;
+    let imgAtual = pacoteOriginal.querySelector("img") ? pacoteOriginal.querySelector("img").getAttribute("src") : "";
+
+    let base = bancoDeCartas.find(c => c.nome === nomeCarta);
+    let idBase = base ? base.id : idPuro;
+
+    let vidaCopia = vidaAtual / 2;
+    let danoCopia = danoAtual / 2;
+
+    let idMaoHTML = ehAliado ? "mao-j1" : "mao-j2";
+    let funcaoJogar = ehAliado ? "jogarCarta" : "jogarCartaInimigo";
+    let classeCss = ehAliado ? "carta-aliada" : "carta-inimiga-espera";
+
+    // 🩹 CORREÇÃO: mesma marcação de lado no ID (ver comentário na Reviverta).
+    let idUnico = idBase + (ehAliado ? "-copia-" : "-inimigo-copia-") + Math.floor(Math.random() * 100000);
+    let novaCarta = { id: idBase, nome: nomeCarta, img: imgAtual, vida: vidaCopia, dano: danoCopia, idUnico: idUnico };
+
+    let htmlDaCarta = criarHTMLCarta(novaCarta, funcaoJogar, classeCss, ehAliado);
+    let divMao = document.getElementById(idMaoHTML);
+    if (divMao) divMao.insertAdjacentHTML('beforeend', htmlDaCarta);
+
+    let pacoteItem = document.getElementById("pacote-" + idItem);
+    if (pacoteItem) pacoteItem.remove();
+
+    let overlay = document.getElementById("overlay-dupliquetion");
+    if (overlay) overlay.remove();
+    dupliquetionPendente = null;
+
+    narrar(`🪞 Dupliquetion! Uma cópia de [${nomeCarta}] nasceu com metade da vida e do dano (❤️${vidaCopia} ⚔️${danoCopia}) na mão ${ehAliado ? "aliada" : "do oponente"}!`);
 }
 function executarTraicao(idAlvoPacote) {
     let pacoteTraidor = document.getElementById("pacote-" + idTraidor);
@@ -2418,6 +3111,9 @@ function aplicarAlvoBarrilBarbaro(idPacoteAlvo) {
 
     if (vidaAtual <= 0) {
         textoNarracao += " O alvo principal foi esmagado!";
+        let nomeAlvoBarrilBarbaro = pacoteAlvo.querySelector(".nome-carta").innerText.trim();
+        let ladoAlvoBarrilBarbaro = pacoteAlvo.closest("#campo-j1") ? "j1" : "j2";
+        registrarMorte(nomeAlvoBarrilBarbaro, ladoAlvoBarrilBarbaro);
         pacoteAlvo.remove();
     } else {
         textoNarracao += " Causando 3 de dano direto.";
@@ -2436,7 +3132,12 @@ function aplicarAlvoBarrilBarbaro(idPacoteAlvo) {
                 if (txtVidaVizinho) {
                     let vidaViz = parseFloat(txtVidaVizinho.innerText) - 1;
                     txtVidaVizinho.innerText = vidaViz;
-                    if (vidaViz <= 0) vizinho.remove();
+                    if (vidaViz <= 0) {
+                        let nomeVizinhoBarril = vizinho.querySelector(".nome-carta") ? vizinho.querySelector(".nome-carta").innerText.trim() : "";
+                        let ladoVizinhoBarril = vizinho.closest("#campo-j1") ? "j1" : "j2";
+                        registrarMorte(nomeVizinhoBarril, ladoVizinhoBarril);
+                        vizinho.remove();
+                    }
                 }
             }
         });
@@ -2444,6 +3145,11 @@ function aplicarAlvoBarrilBarbaro(idPacoteAlvo) {
 
     textoNarracao += " E um Bárbaro saiu de dentro do Barril!";
     narrar(textoNarracao);
+
+    // 🦇 VAMPI7 — o impacto do Barril de Bárbaro também conta como um ataque de verdade.
+    dispararVampi7JuntoDoAtaque(idBarrilAtivo, idPacoteAlvo);
+    // 🛸 PORTABLE — ataca junto enquanto a bateria durar.
+    dispararPortableJuntoDoAtaque(idBarrilAtivo, idPacoteAlvo);
 
     // 3. Mutação: Barril vira Bárbaro (2/2)
     let pacoteBarril = document.getElementById("pacote-" + idBarrilAtivo);
@@ -2468,15 +3174,43 @@ function aplicarAlvoBarrilBarbaro(idPacoteAlvo) {
         
         if (ehBarrilAliado) {
             imagem.onclick = function() {
-                if (typeof modoTraicao !== 'undefined' && modoTraicao) executarTraicao("pacote-" + idBarrilLocal);
-                else if (typeof modoAtaqueInimigo !== 'undefined' && modoAtaqueInimigo) aplicarDanoInimigo("pacote-" + idBarrilLocal);
-                else if (typeof modoCura !== 'undefined' && modoCura) aplicarCuraAliada("pacote-" + idBarrilLocal);
+                let idDoPacoteBarril = "pacote-" + idBarrilLocal;
+                // 🩹 CORREÇÃO: essa cadeia só tinha 3 checagens (Traição, ataque do inimigo,
+                // cura) — faltavam TODOS os outros modos (Ladrão, suportes, Cavaleiro, etc.).
+                // Se qualquer um desses estivesse ativo quando o Bárbaro recém-nascido fosse
+                // clicado, o clique caía direto no "senão" errado (iniciar ataque), fazendo
+                // parecer que a carta simplesmente não respondia ao que devia. Agora a cadeia
+                // é a mesma usada pelas cartas normais do seu lado.
+                if (typeof modoTraicao !== 'undefined' && modoTraicao) executarTraicao(idDoPacoteBarril);
+                else if (typeof modoLadrao !== 'undefined' && modoLadrao === true && turnoAtivo === 1 && faseLadrao === 2) aplicarRouboBeneficio(idDoPacoteBarril);
+                else if (typeof modoLadrao !== 'undefined' && modoLadrao === true && turnoAtivo === 2 && faseLadrao === 1) aplicarRouboPrejuizo(idDoPacoteBarril);
+                else if (typeof modoLadrao !== 'undefined' && modoLadrao === true) narrar("❌ Alvo inválido para o Ladrão! Clique na carta certa pra continuar o roubo.");
+                else if (typeof modoAtaqueInimigo !== 'undefined' && modoAtaqueInimigo) aplicarDanoInimigo(idDoPacoteBarril);
+                else if (typeof modoAlvoBarrilBarbaro !== 'undefined' && (modoAlvoBarrilBarbaro || modoAlvoBarrilBarbaroInimigo)) aplicarAlvoBarrilBarbaro(idDoPacoteBarril);
+                else if (typeof modoCura !== 'undefined' && modoCura) aplicarCuraAliada(idDoPacoteBarril);
+                else if (typeof modoRouboGoblin !== 'undefined' && modoRouboGoblin === true) aplicarRouboDanoGoblin(idDoPacoteBarril);
+                else if (typeof modoAlvoBarril !== 'undefined' && modoAlvoBarril === true) aplicarAlvoBarril(idDoPacoteBarril);
+                else if (typeof modoAlvoCavaleiroInimigo !== 'undefined' && modoAlvoCavaleiroInimigo === true) aplicarAlvoCavaleiroInimigo(idDoPacoteBarril);
+                else if (typeof modoParceriaSeparado !== 'undefined' && modoParceriaSeparado === true) aplicarParceriaSeparado(idDoPacoteBarril);
+                else if (typeof modoPrenderNoTempo !== 'undefined' && modoPrenderNoTempo === true) aplicarPrenderNoTempo(idDoPacoteBarril);
+                else if (typeof suportePreparado !== 'undefined' && suportePreparado !== null) equiparSuporte(idBarrilLocal);
                 else iniciarAtaque("Bárbaro", idBarrilLocal);
             };
         } else {
             imagem.onclick = function() {
-                if (typeof modoTraicao !== 'undefined' && modoTraicao) executarTraicao("pacote-" + idBarrilLocal);
-                else if (typeof modoCuraInimigo !== 'undefined' && modoCuraInimigo) aplicarCuraInimiga("pacote-" + idBarrilLocal);
+                let idDoPacoteBarril = "pacote-" + idBarrilLocal;
+                // 🩹 CORREÇÃO: mesma ideia do lado aliado — cadeia completa em vez de só 2 checagens.
+                if (typeof modoTraicao !== 'undefined' && modoTraicao) executarTraicao(idDoPacoteBarril);
+                else if (typeof modoLadrao !== 'undefined' && modoLadrao === true && turnoAtivo === 1 && faseLadrao === 1) aplicarRouboPrejuizo(idDoPacoteBarril);
+                else if (typeof modoLadrao !== 'undefined' && modoLadrao === true && turnoAtivo === 2 && faseLadrao === 2) aplicarRouboBeneficio(idDoPacoteBarril);
+                else if (typeof modoLadrao !== 'undefined' && modoLadrao === true) narrar("❌ Alvo inválido para o Ladrão! Clique na carta certa pra continuar o roubo.");
+                else if (typeof modoCuraInimigo !== 'undefined' && modoCuraInimigo) aplicarCuraInimiga(idDoPacoteBarril);
+                else if (typeof modoAlvoBarrilBarbaro !== 'undefined' && (modoAlvoBarrilBarbaro || modoAlvoBarrilBarbaroInimigo)) aplicarAlvoBarrilBarbaro(idDoPacoteBarril);
+                else if (typeof modoRouboGoblin !== 'undefined' && modoRouboGoblin === true) aplicarRouboDanoGoblin(idDoPacoteBarril);
+                else if (typeof modoAlvoCavaleiro !== 'undefined' && modoAlvoCavaleiro === true) aplicarAlvoCavaleiro(idDoPacoteBarril);
+                else if (typeof modoParceriaSeparado !== 'undefined' && modoParceriaSeparado === true) aplicarParceriaSeparado(idDoPacoteBarril);
+                else if (typeof modoPrenderNoTempo !== 'undefined' && modoPrenderNoTempo === true) aplicarPrenderNoTempo(idDoPacoteBarril);
+                else if (typeof suportePreparado !== 'undefined' && suportePreparado !== null) equiparSuporte(idBarrilLocal);
                 else receberAtaque("vida-" + idBarrilLocal, "pacote-" + idBarrilLocal);
             };
         }
@@ -2549,6 +3283,11 @@ function aplicarEspecialBumerskeletonAntesDeAtacar(idPacoteAlvo) {
     aplicarDanoAtaqueArea(idPacoteAlvo, danoBase, isInimigoParaOJogo);
     narrar(`🪃 O bumerangue acertou [${nomeAlvo}] causando ${danoBase} de dano!`);
 
+    // 🦇 VAMPI7 — o golpe inicial do bumerangue também conta como um ataque de verdade.
+    dispararVampi7JuntoDoAtaque(idBume, idPacoteAlvo);
+    // 🛸 PORTABLE — ataca junto enquanto a bateria durar.
+    dispararPortableJuntoDoAtaque(idBume, idPacoteAlvo);
+
     // Se o alvo já morreu com o golpe inicial, a cadeia continua nos outros normalmente.
     executarChainBumerangue(idBume, idAlvoPuro, campoAlvoId, () => {
         usarHabilidade("Bumerskeleton", idBume, null);
@@ -2598,6 +3337,7 @@ function executarChainBumerangue(idBumerskeleton, idPrimeiroAlvo, campoAlvoId, a
 
                     if (novaVida <= 0) {
                         narrar(`BUM! [${nomeAlvo}] foi destruído pelo ricochete!`);
+                        registrarMorte(nomeAlvo, campoAlvoId === "campo-j2" ? "j2" : "j1");
                         pacote.remove();
                     }
                 }

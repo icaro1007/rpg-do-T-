@@ -15,7 +15,14 @@
     const MAX_ACOES_POR_TURNO = 40; // trava de segurança contra loop infinito
 
     let botJogando = false;
+    function setBotJogando(valor) {
+        botJogando = valor;
+        // 🌐 Exposto globalmente pra main.js saber quando é o BOT (e não um humano jogando
+        // de Jogador 2 no PvP local) que está tomando a decisão de um pop-up como o do Thiago.
+        window.__rpgBotJogando = valor;
+    }
     let acoesNesteTurno = 0;
+    let ladraoUsosNesteTurno = 0; // trava pra não ficar girando a Passiva do Ladrão o turno inteiro
 
     // -------------------------------------------------------------------
     // UTILITÁRIOS DE LEITURA DO TABULEIRO
@@ -128,11 +135,96 @@
         return alvoMaisFragil(ids); // mesma lógica: quem tem menos vida precisa mais de cura
     }
 
+    // 💀 Escolhe a melhor carta pra Reviverta trazer de volta, olhando os DOIS cemitérios
+    // (não importa de qual time ela morreu — ela volta pra mão de quem usou a poção).
+    // Critério simples: maior soma de vida + dano original.
+    function escolherMelhorCartaCemiterio() {
+        if (typeof cemiterio === "undefined") return null;
+        let melhor = null;
+        ["j1", "j2"].forEach(lado => {
+            cemiterio[lado].forEach((carta, index) => {
+                let score = (parseFloat(carta.vida) || 0) + (parseFloat(carta.dano) || 0);
+                if (!melhor || score > melhor.score) melhor = { lado, index, score };
+            });
+        });
+        return melhor;
+    }
+
+    // 🃏 Escolhe a melhor carta do jogador (mão OU campo) pro Cracker roubar. O bot sempre
+    // rouba do jogador (campo-j1 / mao-j1), já que é o adversário dele. Critério simples:
+    // maior soma de vida + dano no estado atual (o que já é visível na miniatura).
+    function escolherMelhorCartaRoubar() {
+        let candidatos = [];
+        idsNaMao("mao-j1").forEach(id => candidatos.push({ idPacote: "pacote-" + id, origem: "mao" }));
+        idsNoContainer("campo-j1", "carta-aliada").forEach(id => candidatos.push({ idPacote: "pacote-" + id, origem: "campo" }));
+        if (candidatos.length === 0) return null;
+
+        let melhor = null;
+        candidatos.forEach(c => {
+            let idPuro = c.idPacote.replace("pacote-", "");
+            let vida = vidaDaCarta(idPuro) || 0;
+            let dano = danoDaCarta(idPuro) || 0;
+            let score = vida + dano;
+            if (!melhor || score > melhor.score) melhor = { idPacote: c.idPacote, origem: c.origem, score };
+        });
+        return melhor;
+    }
+
+    // 🪞 Escolhe a melhor carta PRÓPRIA do bot (mão, excluindo a Dupliquetion em uso, ou campo)
+    // pra Dupliquetion copiar. Suportes/poções não entram — só tropas de verdade. Mesmo
+    // critério: maior soma de vida + dano no estado atual.
+    function escolherMelhorCartaParaCopiar(idItemExcluir) {
+        let candidatos = [];
+        idsNaMao("mao-j2").filter(id => id !== idItemExcluir).forEach(id => {
+            let pacote = document.getElementById("pacote-" + id);
+            if (pacote && typeof ehPacoteSuporte === "function" && !ehPacoteSuporte(pacote)) candidatos.push("pacote-" + id);
+        });
+        idsNoContainer("campo-j2", "carta-inimiga").forEach(id => {
+            let pacote = document.getElementById("pacote-" + id);
+            if (pacote && typeof ehPacoteSuporte === "function" && !ehPacoteSuporte(pacote)) candidatos.push("pacote-" + id);
+        });
+        if (candidatos.length === 0) return null;
+
+        let melhor = null;
+        candidatos.forEach(idPacote => {
+            let idPuro = idPacote.replace("pacote-", "");
+            let vida = vidaDaCarta(idPuro) || 0;
+            let dano = danoDaCarta(idPuro) || 0;
+            let score = vida + dano;
+            if (!melhor || score > melhor.score) melhor = { idPacote, score };
+        });
+        return melhor;
+    }
+
     // -------------------------------------------------------------------
     // FASE 1 — RESOLVER QUALQUER ESCOLHA DE ALVO PENDENTE
     // (suporte engatilhado, traição em andamento, gelo, barril, ataque aguardando alvo)
     // -------------------------------------------------------------------
     function botResolverEscolhaPendente() {
+        // --- 💀 Reviverta do bot aguardando escolha no cemitério (a do jogador ele não mexe) ---
+        if (typeof revivertaPendente !== "undefined" && revivertaPendente !== null && revivertaPendente.ehAliado === false) {
+            let escolha = escolherMelhorCartaCemiterio();
+            if (!escolha) return false;
+            reviverCartaDoCemiterio(escolha.lado, escolha.index, revivertaPendente.idItem, false);
+            return true;
+        }
+
+        // --- 🃏 Cracker do bot aguardando escolha de qual carta roubar (a do jogador ele não mexe) ---
+        if (typeof crackerPendente !== "undefined" && crackerPendente !== null && crackerPendente.ehAliado === false) {
+            let escolha = escolherMelhorCartaRoubar();
+            if (!escolha) return false;
+            roubarCartaCracker(escolha.idPacote, escolha.origem, crackerPendente.idItem, false);
+            return true;
+        }
+
+        // --- 🪞 Dupliquetion do bot aguardando escolha de qual carta própria copiar ---
+        if (typeof dupliquetionPendente !== "undefined" && dupliquetionPendente !== null && dupliquetionPendente.ehAliado === false) {
+            let escolha = escolherMelhorCartaParaCopiar(dupliquetionPendente.idItem);
+            if (!escolha) return false;
+            copiarCartaDupliquetion(escolha.idPacote, dupliquetionPendente.idItem, false);
+            return true;
+        }
+
         // --- Suporte/poção engatilhado (Besta, Velux, Adiv, Recuperida, Traição-passo1) ---
         if (typeof suportePreparado !== "undefined" && suportePreparado !== null) {
             let tipo = suportePreparado;
@@ -228,9 +320,39 @@
             return true;
         }
 
-        // --- 🩸 Goblin do bot aguardando escolha de quem roubar dano ---
-        if (typeof modoRouboGoblin !== "undefined" && modoRouboGoblin === true) {
+        // --- 💰 Ladrão do bot aguardando alvo (fase 1: rouba do inimigo; fase 2: entrega o
+        // bônus pra uma carta do próprio time) ---
+        if (typeof modoLadrao !== "undefined" && modoLadrao === true) {
+            if (typeof faseLadrao !== "undefined" && faseLadrao === 2) {
+                let candidatos = idsNoContainer("campo-j2", "carta-inimiga");
+                if (candidatos.length === 0) return false;
+                simularCliqueImagem(maiorAmeaca(candidatos));
+                return true;
+            }
             let candidatos = idsNoContainer("campo-j1", "carta-aliada");
+            if (candidatos.length === 0) return false;
+            simularCliqueImagem(maiorAmeaca(candidatos));
+            return true;
+        }
+
+        // --- 🩸 Goblin do bot aguardando escolha de alvo (roubo tem 2 fases: de quem
+        // rouba e pra quem entrega) ---
+        if (typeof modoRouboGoblin !== "undefined" && modoRouboGoblin === true) {
+            let goblinEl = document.getElementById("pacote-" + idGoblinLadrao);
+            if (!goblinEl) return false;
+            let ehJ1 = goblinEl.closest("#campo-j1") !== null;
+
+            if (typeof faseRouboGoblin !== "undefined" && faseRouboGoblin === 2) {
+                // Fase 2: entrega o dano roubado pra uma carta do MESMO time do Goblin.
+                let candidatos = idsNoContainer(ehJ1 ? "campo-j1" : "campo-j2", ehJ1 ? "carta-aliada" : "carta-inimiga")
+                    .filter(id => id !== idGoblinLadrao);
+                if (candidatos.length === 0) return false;
+                simularCliqueImagem(maiorAmeaca(candidatos));
+                return true;
+            }
+
+            // Fase 1: rouba 1 de dano de uma carta INIMIGA.
+            let candidatos = idsNoContainer(ehJ1 ? "campo-j2" : "campo-j1", ehJ1 ? "carta-inimiga" : "carta-aliada");
             if (candidatos.length === 0) return false;
             simularCliqueImagem(maiorAmeaca(candidatos));
             return true;
@@ -350,6 +472,32 @@
         if (nome.includes("gelo")) {
             return idsNoContainer("campo-j1", "carta-aliada").length > 0;
         }
+        // Reviverta só vale a pena jogar se existir pelo menos 1 carta morta em algum dos cemitérios.
+        if (nome.includes("reviverta")) {
+            return typeof cemiterio !== "undefined" && (cemiterio.j1.length > 0 || cemiterio.j2.length > 0);
+        }
+        // Cracker só vale a pena jogar se o jogador tiver ao menos 1 carta na mão OU em campo.
+        if (nome.includes("cracker")) {
+            return idsNaMao("mao-j1").length > 0 || idsNoContainer("campo-j1", "carta-aliada").length > 0;
+        }
+        // Allsforms só vale a pena jogar se o próprio bot tiver ao menos 1 tropa em campo pra buffar.
+        if (nome.includes("allsforms")) {
+            return idsNoContainer("campo-j2", "carta-inimiga").length > 0;
+        }
+        // Dupliquetion precisa de ao menos 1 TROPA própria (mão, além dela mesma, ou campo) pra
+        // copiar — suportes/poções não contam como alvo válido.
+        if (nome.includes("dupliquetion")) {
+            if (typeof ehPacoteSuporte !== "function") return true;
+            let temNaMao = idsNaMao("mao-j2").some(id => {
+                let pacote = document.getElementById("pacote-" + id);
+                return pacote && !ehPacoteSuporte(pacote) && nomeDaCarta(id) !== "Dupliquetion";
+            });
+            let temNoCampo = idsNoContainer("campo-j2", "carta-inimiga").some(id => {
+                let pacote = document.getElementById("pacote-" + id);
+                return pacote && !ehPacoteSuporte(pacote);
+            });
+            return temNaMao || temNoCampo;
+        }
         return true; // demais suportes (Besta/Velux/Recuperida) sempre têm alvo válido nesta altura
     }
 
@@ -409,6 +557,17 @@
         return true;
     }
 
+    // Lê o nome de habilidade GRAVADO no onclick do botão (ex: usarHabilidade('Criador', ...)).
+    // Precisa ser assim (e não o nome exibido na carta) porque cartas como o Criador mudam
+    // o texto exibido pra "Ícaro"/"Thiago" mas o botão continua chamando usarHabilidade
+    // com o nome original "Criador" — usar o nome exibido faria o dado de despacho da
+    // habilidade não reconhecer a carta e a chamada não fazer nada.
+    function nomeHabilidadeDoBotao(btn) {
+        let attr = btn.getAttribute("onclick") || "";
+        let m = attr.match(/usarHabilidade\('([^']+)'/);
+        return m ? m[1] : null;
+    }
+
     // -------------------------------------------------------------------
     // FASE 2.7 — USAR ESPECIAIS (o bot clica no botão "Especial 🔮" das
     // próprias cartas que ainda não usaram; a maioria não gasta o turno, e
@@ -417,34 +576,111 @@
     // então só vale a pena quando tem alguém realmente ferido pra curar.
     // -------------------------------------------------------------------
     function botUsarEspeciais() {
-        let candidatos = idsNoContainer("campo-j2", "carta-inimiga").filter(id => {
+        let idsComCarta = idsNoContainer("campo-j2", "carta-inimiga");
+
+        // 💰 Ladrão: rola o dado da Passiva pra tentar abrir uma chance de roubo (o alvo,
+        // quando abre, é resolvido depois em botResolverEscolhaPendente). É "usa quando
+        // quiser" no jogo, mas limitamos a 1 tentativa por turno pro bot não ficar girando
+        // essa passiva o turno inteiro em vez de atacar.
+        if (ladraoUsosNesteTurno < 1) {
+            for (let id of idsComCarta) {
+                if (nomeDaCarta(id) !== "Ladrão") continue;
+                if (typeof modoLadrao !== "undefined" && modoLadrao === true) continue; // já tem um roubo em andamento
+                let btnLadrao = document.querySelector('#pacote-' + cssEscape(id) + ' button[onclick*="usarPassivaLadrao"]');
+                if (!btnLadrao || btnLadrao.style.display === "none") continue;
+                ladraoUsosNesteTurno++;
+                try {
+                    usarPassivaLadrao(id, btnLadrao);
+                } catch (e) {
+                    console.warn("[BOT] erro na Passiva do Ladrão:", e);
+                    continue;
+                }
+                return true;
+            }
+        }
+
+        // ⏳ Viajante do Tempo (Passiva "Viajar no Tempo"): só vale usar se tiver algum
+        // botão realmente escondido no time pra reaproveitar — senão é desperdiçar à toa.
+        for (let id of idsComCarta) {
+            if (nomeDaCarta(id) !== "Viajante do Tempo") continue;
+            let btnViajar = document.querySelector('#pacote-' + cssEscape(id) + ' button[onclick*="usarPassivaViajante"]');
+            if (!btnViajar || btnViajar.style.display === "none") continue;
+            let campoProprio = document.getElementById("campo-j2");
+            let temBotaoEscondido = campoProprio && Array.from(campoProprio.querySelectorAll("button")).some(b => b !== btnViajar && b.style.display === "none");
+            if (!temBotaoEscondido) continue;
+            try {
+                usarPassivaViajante(id, btnViajar);
+            } catch (e) {
+                console.warn("[BOT] erro na Passiva do Viajante do Tempo:", e);
+                continue;
+            }
+            return true;
+        }
+
+        // 📋 Ctrl C / Ctrl V: precisam copiar a Passiva de uma carta antes do Especial
+        // fazer qualquer sentido — sem isso, o Especial só dá erro ("dados da carta
+        // copiada" não encontrados).
+        for (let id of idsComCarta) {
+            if (nomeDaCarta(id) !== "Ctrl C" && nomeDaCarta(id) !== "Ctrl V") continue;
+            let jaCopiou = typeof ctrlV !== "undefined" && ctrlV[id];
+            if (jaCopiou) continue;
+            let btnPassiva = document.querySelector('#pacote-' + cssEscape(id) + ' button[onclick*="usarPassivaCtrlC"]');
+            if (!btnPassiva || btnPassiva.style.display === "none") continue;
+            try {
+                usarPassivaCtrlC(id, btnPassiva);
+            } catch (e) {
+                console.warn("[BOT] erro na Passiva do Ctrl:", e);
+                continue;
+            }
+            return true;
+        }
+
+        // 💚 Curandeiro: "Curar Oponente 💚" é uma ação separada do Especial e ENCERRA o
+        // turno, então só vale clicar quando tem alguém do time realmente ferido.
+        for (let id of idsComCarta) {
+            if (nomeDaCarta(id) !== "Curandeiro") continue;
+            let btnCurar = document.querySelector('#pacote-' + cssEscape(id) + ' button[onclick*="iniciarCuraInimigo"]');
+            if (!btnCurar || btnCurar.style.display === "none") continue;
+            let aliados = idsComCarta.filter(outroId => outroId !== id);
+            let algumFerido = aliados.some(outroId => {
+                let idBase = idBaseDaCarta(outroId);
+                let info = (typeof bancoDeCartas !== "undefined" && idBase) ? bancoDeCartas.find(c => c.id === idBase) : null;
+                let vidaMax = info ? info.vida : null;
+                let vidaAtual = vidaDaCarta(outroId);
+                return vidaMax !== null && vidaAtual !== null && vidaAtual < vidaMax;
+            });
+            if (!algumFerido) continue; // guarda a cura pra quando fizer falta de verdade
+            try {
+                iniciarCuraInimigo(id);
+            } catch (e) {
+                console.warn("[BOT] erro ao iniciar cura:", e);
+                continue;
+            }
+            return true;
+        }
+
+        let candidatos = idsComCarta.filter(id => {
             let btn = document.querySelector('#pacote-' + cssEscape(id) + ' button[onclick*="usarHabilidade"]');
             return btn && btn.style.display !== "none";
         });
         if (candidatos.length === 0) return false;
 
         for (let id of candidatos) {
-            let nome = nomeDaCarta(id);
+            let nomeExibido = nomeDaCarta(id);
             let btn = document.querySelector('#pacote-' + cssEscape(id) + ' button[onclick*="usarHabilidade"]');
             if (!btn) continue;
+            let nomeParaChamar = nomeHabilidadeDoBotao(btn) || nomeExibido;
 
-            // 💚 Curandeiro: só vale usar (e encerrar o turno) se alguém do time estiver ferido.
-            if (nome === "Curandeiro") {
-                let aliados = idsNoContainer("campo-j2", "carta-inimiga").filter(outroId => outroId !== id);
-                let algumFerido = aliados.some(outroId => {
-                    let idBase = idBaseDaCarta(outroId);
-                    let info = (typeof bancoDeCartas !== "undefined" && idBase) ? bancoDeCartas.find(c => c.id === idBase) : null;
-                    let vidaMax = info ? info.vida : null;
-                    let vidaAtual = vidaDaCarta(outroId);
-                    return vidaMax !== null && vidaAtual !== null && vidaAtual < vidaMax;
-                });
-                if (!algumFerido) continue; // guarda a cura pra quando fizer falta de verdade
+            // 👹 Trio de Goblin só pode usar a habilidade quando restar 1 goblin (vida ≤ 2).
+            if (nomeExibido === "Trio de Goblin") {
+                let vida = vidaDaCarta(id);
+                if (vida === null || vida > 2) continue;
             }
 
             try {
-                usarHabilidade(nome, id, btn);
+                usarHabilidade(nomeParaChamar, id, btn);
             } catch (e) {
-                console.warn("[BOT] erro ao usar Especial de", nome, e);
+                console.warn("[BOT] erro ao usar Especial de", nomeExibido, e);
                 continue;
             }
             return true; // uma ação por ciclo — dá tempo do "modo" pendente ser resolvido depois
@@ -499,13 +735,13 @@
     // LOOP PRINCIPAL DO TURNO DO BOT
     // -------------------------------------------------------------------
     function botCicloDeTurno() {
-        if (!estaVezDoBot()) { botJogando = false; acoesNesteTurno = 0; return; }
+        if (!estaVezDoBot()) { setBotJogando(false); acoesNesteTurno = 0; ladraoUsosNesteTurno = 0; return; }
 
         acoesNesteTurno++;
         if (acoesNesteTurno > MAX_ACOES_POR_TURNO) {
             console.warn("[BOT] limite de ações atingido, forçando passar o turno.");
             try { passarTurno(); } catch (e) { /* nada a fazer */ }
-            botJogando = false; acoesNesteTurno = 0;
+            setBotJogando(false); acoesNesteTurno = 0; ladraoUsosNesteTurno = 0;
             return;
         }
 
@@ -523,14 +759,16 @@
         if (typeof turnoAtivo !== "undefined" && turnoAtivo === 2) {
             try { passarTurno(); } catch (e) { /* nada a fazer */ }
         }
-        botJogando = false;
+        setBotJogando(false);
         acoesNesteTurno = 0;
+        ladraoUsosNesteTurno = 0;
     }
 
     function verificarEIniciarBot() {
         if (estaVezDoBot() && !botJogando) {
-            botJogando = true;
+            setBotJogando(true);
             acoesNesteTurno = 0;
+            ladraoUsosNesteTurno = 0;
             setTimeout(botCicloDeTurno, BOT_DELAY_INICIO);
         }
     }
