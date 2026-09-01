@@ -426,3 +426,306 @@ button:active {
         opacity: 0;
     }
 }
+
+/* ========================================================================== 
+   VFX TEMÁTICOS DE COMBATE
+   ========================================================================== */
+#camada-vfx-combate {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    overflow: visible;
+    pointer-events: none;
+    z-index: 9998;
+}
+
+.vfx-projetil {
+    position: fixed;
+    width: 42px;
+    height: 42px;
+    margin: 0;
+    padding: 0;
+    object-fit: contain;
+    border: 0 !important;
+    border-radius: 0;
+    background: transparent;
+    pointer-events: none;
+    transform: translate(-50%, -50%);
+    animation-name: vfxProjetilEmArco;
+    animation-timing-function: cubic-bezier(.22,.75,.28,1);
+    animation-fill-mode: forwards;
+    filter: drop-shadow(0 3px 4px rgba(0,0,0,.8));
+}
+
+.vfx-barril-goblin {
+    width: 54px;
+    height: 70px;
+    animation-name: vfxBarrilGoblinVoa;
+}
+
+.vfx-barril-barbaro {
+    width: 62px;
+    height: 76px;
+    animation-name: vfxBarrilBarbaroRola;
+    animation-timing-function: ease-in;
+}
+
+.vfx-bumerangue {
+    width: auto;
+    height: auto;
+    font-size: 2.5rem;
+    animation-name: vfxBumerangueVoa;
+    filter: drop-shadow(0 0 7px #ffcf66) drop-shadow(0 4px 4px rgba(0,0,0,.8));
+}
+
+.vfx-bumerangue-volta {
+    filter: drop-shadow(0 0 9px #66e5ff) drop-shadow(0 4px 4px rgba(0,0,0,.8));
+}
+
+.vfx-flecha {
+    width: auto;
+    height: auto;
+    font-size: 3rem;
+    color: #f6e4b8;
+    animation-name: vfxFlechaVoa;
+    filter: drop-shadow(0 0 4px #fff) drop-shadow(0 3px 3px #000);
+}
+
+.vfx-orbe-magico,
+.vfx-veneno {
+    width: auto;
+    height: auto;
+    font-size: 2.3rem;
+    filter: drop-shadow(0 0 12px #9b5cff);
+}
+
+.vfx-veneno {
+    filter: drop-shadow(0 0 12px #55e631);
+}
+
+.vfx-vento,
+.vfx-vento-area {
+    width: auto;
+    height: auto;
+    font-size: 2.2rem;
+    filter: drop-shadow(0 0 8px #b9f2ff);
+}
+
+.vfx-golpe-ork,
+.vfx-golpe-espada,
+.vfx-golpe-sombrio {
+    width: auto;
+    height: auto;
+    font-size: 2.2rem;
+}
+
+.vfx-golpe-sombrio {
+    filter: drop-shadow(0 0 8px #b42dff) drop-shadow(0 0 15px #000);
+}
+
+.vfx-goblin-projetil {
+    width: 38px;
+    height: 52px;
+    animation-name: vfxGoblinPula;
+}
+
+.vfx-goblin-atacando {
+    position: fixed;
+    width: 40px;
+    height: 54px;
+    object-fit: contain;
+    border: 0 !important;
+    pointer-events: none;
+    transform: translate(-50%, -50%) scale(.2);
+    animation: vfxGoblinSaiEAtaca .9s cubic-bezier(.2,.75,.3,1) forwards;
+    filter: drop-shadow(0 3px 4px rgba(0,0,0,.8));
+}
+
+.vfx-impacto {
+    position: fixed;
+    width: auto;
+    height: auto;
+    font-size: 3rem;
+    line-height: 1;
+    pointer-events: none;
+    transform: translate(-50%, -50%);
+    animation: vfxImpactoSurge .85s ease-out forwards;
+    filter: drop-shadow(0 0 10px #ffcf3b);
+}
+
+.vfx-impacto-escudo {
+    filter: drop-shadow(0 0 12px #78d9ff);
+}
+
+.vfx-impacto-veneno {
+    filter: drop-shadow(0 0 12px #5dff3f);
+}
+
+.vfx-impacto-sombrio {
+    filter: drop-shadow(0 0 12px #b43cff);
+}
+
+.vfx-impacto-ressurreicao {
+    filter: drop-shadow(0 0 14px #fff6a1);
+}
+
+.vfx-explosao-campo {
+    position: fixed;
+    font-size: clamp(4rem, 10vw, 8rem);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    animation: vfxExplosaoCampo 1s ease-out forwards;
+    filter: drop-shadow(0 0 18px #ff6a00);
+}
+
+/* Fogo persistente enquanto a carta está queimando. */
+.em-chamas-vfx {
+    box-shadow: 0 0 14px rgba(255,70,0,.95), 0 0 26px rgba(255,180,0,.65) !important;
+}
+
+.com-polvora-vfx {
+    animation: vfxPolvoraPisca .75s ease-in-out infinite alternate;
+    outline: 2px dashed rgba(187,126,52,.8);
+    outline-offset: -5px;
+}
+
+.efeito-elemental {
+    position: absolute;
+    inset: 0;
+    z-index: 35;
+    overflow: hidden;
+    border-radius: inherit;
+    pointer-events: none;
+}
+
+.efeito-elemental-fogo {
+    background: linear-gradient(to top, rgba(255,70,0,.26), transparent 58%);
+    mix-blend-mode: normal;
+}
+
+.efeito-elemental-fogo span {
+    position: absolute;
+    bottom: -22px;
+    font-size: 1.55rem;
+    animation-name: vfxChamaSobe;
+    animation-timing-function: ease-in;
+    animation-iteration-count: infinite;
+    filter: drop-shadow(0 0 6px #ff7b00);
+}
+
+/* O floco estático antigo dá lugar a gelo em movimento e cristais se formando. */
+.congelada::after {
+    content: none !important;
+}
+
+.congelada {
+    overflow: hidden;
+    background-image: linear-gradient(145deg, rgba(214,250,255,.5), rgba(69,187,255,.16)) !important;
+}
+
+.efeito-elemental-gelo {
+    background:
+        linear-gradient(135deg, rgba(255,255,255,.55), transparent 24%),
+        linear-gradient(315deg, rgba(71,210,255,.35), transparent 35%);
+    box-shadow: inset 0 0 16px rgba(120,235,255,.75);
+}
+
+.efeito-elemental-gelo span {
+    position: absolute;
+    top: -20px;
+    color: #e8fcff;
+    font-size: 1.15rem;
+    animation-name: vfxNeveCai;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+    text-shadow: 0 0 6px #50dfff;
+}
+
+.vfx-congelando-agora {
+    animation: vfxCongelamentoEntrada .65s ease-out !important;
+}
+
+@keyframes vfxProjetilEmArco {
+    0% { transform: translate(-50%, -50%) scale(.55); opacity: 0; }
+    12% { opacity: 1; }
+    58% { transform: translate(calc(-50% + var(--vfx-x-meio)), calc(-50% + var(--vfx-y-meio))) scale(1.08); opacity: 1; }
+    100% { transform: translate(calc(-50% + var(--vfx-x-final)), calc(-50% + var(--vfx-y-final))) scale(.85); opacity: 0; }
+}
+
+@keyframes vfxBarrilGoblinVoa {
+    0% { transform: translate(-50%, -50%) rotate(0deg) scale(.55); opacity: 0; }
+    15% { opacity: 1; }
+    55% { transform: translate(calc(-50% + var(--vfx-x-meio)), calc(-50% + var(--vfx-y-meio))) rotate(230deg) scale(1.08); }
+    100% { transform: translate(calc(-50% + var(--vfx-x-final)), calc(-50% + var(--vfx-y-final))) rotate(520deg) scale(.85); opacity: 0; }
+}
+
+@keyframes vfxBarrilBarbaroRola {
+    0% { transform: translate(-50%, -50%) rotate(0deg) scale(.75); opacity: 0; }
+    10% { opacity: 1; }
+    55% { transform: translate(calc(-50% + var(--vfx-x-meio)), calc(-50% + var(--vfx-y-meio))) rotate(420deg) scale(1); }
+    100% { transform: translate(calc(-50% + var(--vfx-x-final)), calc(-50% + var(--vfx-y-final))) rotate(900deg) scale(.92); opacity: 0; }
+}
+
+@keyframes vfxBumerangueVoa {
+    0% { transform: translate(-50%, -50%) rotate(0deg) scale(.6); opacity: 0; }
+    12% { opacity: 1; }
+    55% { transform: translate(calc(-50% + var(--vfx-x-meio)), calc(-50% + var(--vfx-y-meio))) rotate(540deg) scale(1.15); }
+    100% { transform: translate(calc(-50% + var(--vfx-x-final)), calc(-50% + var(--vfx-y-final))) rotate(1080deg) scale(.8); opacity: 0; }
+}
+
+@keyframes vfxFlechaVoa {
+    0% { transform: translate(-50%, -50%) rotate(-10deg) scale(.5); opacity: 0; }
+    15% { opacity: 1; }
+    100% { transform: translate(calc(-50% + var(--vfx-x-final)), calc(-50% + var(--vfx-y-final))) rotate(-10deg) scale(1); opacity: 0; }
+}
+
+@keyframes vfxGoblinPula {
+    0% { transform: translate(-50%, -50%) scale(.3) rotate(-12deg); opacity: 0; }
+    20% { opacity: 1; }
+    55% { transform: translate(calc(-50% + var(--vfx-x-meio)), calc(-50% + var(--vfx-y-meio))) scale(1.1) rotate(8deg); }
+    100% { transform: translate(calc(-50% + var(--vfx-x-final)), calc(-50% + var(--vfx-y-final))) scale(.8); opacity: 0; }
+}
+
+@keyframes vfxGoblinSaiEAtaca {
+    0% { transform: translate(-50%, -50%) scale(.15); opacity: 0; }
+    25% { transform: translate(calc(-50% + var(--goblin-x)), calc(-50% + var(--goblin-y))) scale(1); opacity: 1; }
+    65% { transform: translate(-50%, -50%) scale(1.12); opacity: 1; }
+    100% { transform: translate(-50%, -50%) scale(.45); opacity: 0; }
+}
+
+@keyframes vfxImpactoSurge {
+    0% { transform: translate(-50%, -50%) scale(.2); opacity: 0; }
+    28% { transform: translate(-50%, -50%) scale(1.35); opacity: 1; }
+    100% { transform: translate(-50%, -50%) scale(.75); opacity: 0; }
+}
+
+@keyframes vfxExplosaoCampo {
+    0% { transform: translate(-50%, -50%) scale(.1); opacity: 0; }
+    35% { transform: translate(-50%, -50%) scale(1.2); opacity: 1; }
+    100% { transform: translate(-50%, -50%) scale(1.65); opacity: 0; }
+}
+
+@keyframes vfxChamaSobe {
+    0% { transform: translateY(12px) scale(.6) rotate(-7deg); opacity: 0; }
+    25% { opacity: 1; }
+    70% { transform: translateY(-75px) scale(1.05) rotate(7deg); opacity: .95; }
+    100% { transform: translateY(-125px) scale(.45); opacity: 0; }
+}
+
+@keyframes vfxNeveCai {
+    0% { transform: translateY(-12px) rotate(0deg); opacity: 0; }
+    18% { opacity: .95; }
+    100% { transform: translateY(210px) rotate(300deg); opacity: 0; }
+}
+
+@keyframes vfxCongelamentoEntrada {
+    0% { transform: scale(1); filter: brightness(1); }
+    35% { transform: scale(1.06); filter: brightness(1.8) saturate(.55); }
+    100% { transform: scale(1); filter: brightness(.82); }
+}
+
+@keyframes vfxPolvoraPisca {
+    from { filter: sepia(.15) brightness(.95); }
+    to { filter: sepia(.8) brightness(1.12); }
+}

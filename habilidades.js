@@ -757,6 +757,9 @@ if (nome === "Bumerskeleton") {
             if (pacoteAlvo) {
                 // Descobre qual é o próximo dano da escala 
                 let danoDoRetorno = tabelaDanoBumerangue[alvosAtingidos.length] || 4; 
+                if (typeof animarBumerangueEntre === "function") {
+                    animarBumerangueEntre(primeiroAlvo, idUnico, true);
+                }
                 
                 let txtVida = document.getElementById("vida-" + primeiroAlvo);
                 let vidaAtual = parseFloat(txtVida.innerText);
@@ -780,6 +783,7 @@ if (nome === "Bumerskeleton") {
             alvosAtingidos.forEach(idAlvo => {
                 let txtVida = document.getElementById("vida-" + idAlvo);
                 if (txtVida) {
+                    if (typeof ativarFogoCarta === "function") ativarFogoCarta(idAlvo, 1500, false);
                     // 🩹 CORREÇÃO: nunca deixa a vida mostrar número negativo — trava em 0.
                     txtVida.innerText = Math.max(0, parseFloat(txtVida.innerText) - 0.25);
                     if (typeof mostrarEfeitoPerdaVida === "function") mostrarEfeitoPerdaVida(idAlvo);
