@@ -8,7 +8,7 @@ let aberturaEscolhaJ2 = null;  // 🆕 id da carta que o oponente escolheu pra a
 let ultimaCartaOponente = null; 
 let ultimaCartaJogador = null;  
 let ctrlV = {}; 
-let bonusUnidao = {}; // Guarda o bônus atual de cada Unidão no campo
+let bonusUnidao = {}; // Guarda apenas a parcela variável que cada Unidão copiou dos aliados
 let goblinJaAtacouNesteTurno = {}; // Registra se o Goblin já fez o primeiro ataque da rodada
 let goblinAtaquesGanhos = {};      // Guarda quais Goblins específicos ganharam o ataque extra
 let ultimoIdQueAtacou = null;      // Guarda o ID da última carta que desferiu um ataque
@@ -48,7 +48,8 @@ let modoBruxoRoubar = false;
 let idBruxoAtivo = null;
 let modoGeloSimples = false;
 let idPocaoAtiva = null; 
-let duracaoGelo = {}; // ⏳ CRUCIAL: Guarda quem está congelado e por quantos turnos
+let duracaoGelo = {}; // Guarda quem está congelado e por quantas passagens de turno
+let passagemAutomaticaGeloPendente = null; // evita um passe atrasado trocar dois turnos de uma vez
 let alvosDoBumerangue = {}; // Guarda a lista de quem o bumerangue bateu: { idBume: ['alvo1', 'alvo2'] }
 let modoEspecialBumerskeleton = false; // 🪃 Especial do Bumerskeleton acionado ANTES de atacar
 let idBumerskeletonEspecialAtivo = null;
@@ -69,11 +70,15 @@ let separadaoDividido = {}; // idSeparado -> quantos ataques da dupla ainda falt
 let modoPrenderNoTempo = false; // aguardando clique na carta inimiga que vai ficar presa no tempo
 let idPrenderNoTempoAtivo = null;
 let portableDuracao = {}; // idUnico -> passagens de turno restantes até a bateria acabar (2 rodadas = 4 passagens)
+let ladraoUsosPorLado = { j1: 0, j2: 0 }; // zera a cada passagem de turno — 1 uso da passiva do Ladrão por turno, por lado
 let cemiterio = { j1: [], j2: [] }; // guarda as cartas mortas de cada lado, prontas pra Reviverta trazer de volta
 let revivertaPendente = null; // { idItem, ehAliado } enquanto o cemitério está aberto aguardando escolha
 let crackerPendente = null; // { idItem, ehAliado } enquanto a tela de roubo do Cracker está aberta aguardando escolha
 let buffsAllsforms = {}; // idUnico -> array de { bonus, restam } — restam em passagens de turno (1 rodada = 2 passagens)
 let dupliquetionPendente = null; // { idItem, ehAliado } enquanto a tela de escolha da Dupliquetion está aberta
+let modoAlvoVenenoMago = false; // aguardando o Mago escolher uma carta do lado oposto
+let idMagoVenenoAtivo = null;
+let venenosMago = {}; // idMago -> { idAlvo, restam }; 2 rodadas = 4 passagens de turno
 
 // 🚨 NOVIDADE: A lista de suportes/poções agora fica no topo do código!
 let suportesReais = [
@@ -83,6 +88,13 @@ let suportesReais = [
 
 function narrar(mensagem) {
     document.getElementById("painel-narrador").innerText = mensagem;
+}
+
+// O Ctrl C/V mantém o próprio nome na tela, mas para as regras do jogo ele assume a
+// identidade da carta copiada. Toda passiva que depende do nome deve passar por este helper.
+function obterNomeEfetivoCarta(idUnico, nomeExibido) {
+    let copia = (typeof ctrlV !== 'undefined' && ctrlV[idUnico]) ? ctrlV[idUnico] : null;
+    return (copia && copia.nomeOriginal) ? copia.nomeOriginal : (nomeExibido || "");
 }
 
 function obterModoCartaAliada() {
@@ -107,6 +119,60 @@ function obterModoCartaInimiga() {
     if (suportePreparado !== null) return "suporte";
     return "receber-ataque";
 }
+
+function removerVenenoDoMago(idMago) {
+    let efeito = venenosMago[idMago];
+    if (!efeito) return;
+
+    let idAlvo = efeito.idAlvo;
+    delete venenosMago[idMago];
+
+    let aindaEstaEnvenenado = Object.values(venenosMago).some(outro => outro.idAlvo === idAlvo);
+    if (!aindaEstaEnvenenado) {
+        let pacoteAlvo = document.getElementById("pacote-" + idAlvo);
+        if (pacoteAlvo) pacoteAlvo.classList.remove("envenenada");
+    }
+}
+
+function aplicarAlvoVenenoMago(idPacoteAlvo) {
+    let pacoteMago = document.getElementById("pacote-" + idMagoVenenoAtivo);
+    let pacoteAlvo = document.getElementById(idPacoteAlvo);
+
+    if (!pacoteMago) {
+        modoAlvoVenenoMago = false;
+        idMagoVenenoAtivo = null;
+        return;
+    }
+    if (!pacoteAlvo) return;
+
+    let ladoMago = pacoteMago.closest("#campo-j1") ? "j1" : pacoteMago.closest("#campo-j2") ? "j2" : null;
+    let ladoAlvo = pacoteAlvo.closest("#campo-j1") ? "j1" : pacoteAlvo.closest("#campo-j2") ? "j2" : null;
+    if (!ladoAlvo || ladoMago === ladoAlvo) {
+        return narrar("❌ O veneno do Mago precisa atingir uma carta do campo oposto!");
+    }
+
+    let idAlvo = idPacoteAlvo.replace("pacote-", "");
+    if (venenosMago[idMagoVenenoAtivo]) removerVenenoDoMago(idMagoVenenoAtivo);
+    venenosMago[idMagoVenenoAtivo] = { idAlvo: idAlvo, restam: 4 };
+    pacoteAlvo.classList.add("envenenada");
+
+    let nomeAlvo = pacoteAlvo.querySelector(".nome-carta").innerText.trim();
+    modoAlvoVenenoMago = false;
+    idMagoVenenoAtivo = null;
+    narrar(`☠️ ${nomeAlvo} foi envenenado! Sofrerá 0,5 de dano em cada jogada pelas próximas 2 rodadas.`);
+}
+
+// A captura do clique deixa qualquer carta normal, token ou transformação ser alvo do veneno.
+document.addEventListener("click", function (evento) {
+    if (!modoAlvoVenenoMago) return;
+    let imagem = evento.target && evento.target.closest ? evento.target.closest("img") : null;
+    let pacote = imagem ? imagem.closest("div[id^='pacote-']") : null;
+    if (!pacote || (!pacote.closest("#campo-j1") && !pacote.closest("#campo-j2"))) return;
+
+    evento.preventDefault();
+    evento.stopImmediatePropagation();
+    aplicarAlvoVenenoMago(pacote.id);
+}, true);
 
 function iniciarJogo() {
     deckJ1 = []; maoJ1 = [];
@@ -283,6 +349,8 @@ function passarVezManual() {
     suportePreparado = null;
     modoTraicao = false;
     modoGeloSimples = false;
+    modoAlvoVenenoMago = false;
+    idMagoVenenoAtivo = null;
     if (typeof modoAlvoBarril !== "undefined") modoAlvoBarril = false;
     if (typeof modoAlvoBarrilBarbaro !== "undefined") modoAlvoBarrilBarbaro = false;
     if (typeof modoAlvoBarrilBarbaroInimigo !== "undefined") modoAlvoBarrilBarbaroInimigo = false;
@@ -296,6 +364,13 @@ function passarVezManual() {
 }
 
 function passarTurno() {
+    // Se alguma ação ou o botão manual encerrou o turno antes do aviso de congelamento,
+    // cancela o passe agendado para ele não atingir o jogador seguinte.
+    if (passagemAutomaticaGeloPendente !== null) {
+        clearTimeout(passagemAutomaticaGeloPendente);
+        passagemAutomaticaGeloPendente = null;
+    }
+
     // 1. CHECAGEM DE REATAQUES (Se ativar, sai da função sem passar o turno)
     if (ultimoIdQueAtacou && goblinAtaquesGanhos[ultimoIdQueAtacou] === true) {
         goblinAtaquesGanhos[ultimoIdQueAtacou] = false; 
@@ -314,6 +389,7 @@ function passarTurno() {
     
     goblinAtaquesGanhos = {};
     ultimoIdQueAtacou = null;
+    ladraoUsosPorLado = { j1: 0, j2: 0 }; // 🩹 NOVO: libera 1 uso da passiva do Ladrão por turno, por lado
     
     // Inverte o turno de 1 para 2 ou de 2 para 1
     turnoAtivo = (turnoAtivo === 1) ? 2 : 1;
@@ -326,6 +402,8 @@ function passarTurno() {
     modoAlvoBarril = false;
     modoAlvoBarrilInimigo = false;
     idBarrilAtivo = null;
+    modoAlvoVenenoMago = false;
+    idMagoVenenoAtivo = null;
 
     // 3. ATUALIZAÇÃO DO TEXTO DA INTERFACE
     let containerTurno = document.getElementById("texto-turno");
@@ -376,6 +454,33 @@ function passarTurno() {
         });
     }
 
+    // 4.1 --- VENENO DO MAGO ---
+    // Duas rodadas completas equivalem a quatro passagens de turno. Assim como os Goblins
+    // do Barril, o dano só continua enquanto a carta que criou o efeito estiver na arena.
+    Object.keys(venenosMago).forEach(idMago => {
+        let efeito = venenosMago[idMago];
+        let pacoteMago = document.getElementById("pacote-" + idMago);
+        let pacoteAlvo = document.getElementById("pacote-" + efeito.idAlvo);
+
+        if (!pacoteMago || !pacoteAlvo) {
+            removerVenenoDoMago(idMago);
+            return;
+        }
+
+        pacoteAlvo.classList.add("envenenada");
+        let nomeAlvo = pacoteAlvo.querySelector(".nome-carta").innerText.trim();
+        let alvoEhInimigo = pacoteAlvo.closest("#campo-j2") !== null;
+        aplicarDanoDireto(pacoteAlvo.id, 0.5, alvoEhInimigo);
+        efeito.restam--;
+
+        if (efeito.restam <= 0 || !document.getElementById(pacoteAlvo.id)) {
+            removerVenenoDoMago(idMago);
+            narrar(`☠️ ${nomeAlvo} sofreu os últimos 0,5 de dano. O veneno acabou!`);
+        } else {
+            narrar(`☠️ O veneno causou 0,5 de dano em ${nomeAlvo}! Restam ${efeito.restam} jogadas.`);
+        }
+    });
+
     // 5. ⏳ LIMPEZA DE FADIGA DO NECROMANTE (Duração de 1 Rodada = 2 trocas de turno)
     // 🩹 CORREÇÃO: antes tentava adivinhar o lado da carta pelo ID conter "inimigo",
     // mas os tokens do Necromante (ex: "necro_xxxx") nunca têm essa palavra no nome,
@@ -390,7 +495,7 @@ function passarTurno() {
         }
     }
 
-    // 6. ❄️ SISTEMA DE DEGELO SEGURO (Duração de 2 rodadas = 4 passagens de turno)
+    // 6. ❄️ SISTEMA DE DEGELO — todos os gelos ganharam +1 rodada (= +2 passagens)
     if (typeof duracaoGelo !== 'undefined' && duracaoGelo !== null) {
         Object.keys(duracaoGelo).forEach(idCarta => {
             duracaoGelo[idCarta]--; // Reduz 1 turno do relógio do gelo
@@ -516,24 +621,34 @@ function passarTurno() {
 }
 
 function verificarBloqueioTotalGelo(idJogador) {
-    // idJogador deve ser "j1" ou "j2"
-    let totalCartas = document.querySelectorAll(`#campo-${idJogador} [id^="pacote-"], #mao-${idJogador} [id^="pacote-"]`);
-    let totalCongeladas = document.querySelectorAll(`#campo-${idJogador} .congelada, #mao-${idJogador} .congelada`);
+    let campo = document.getElementById("campo-" + idJogador);
+    if (!campo) return false;
 
-    // Se o jogador possui cartas e ABSOLUTAMENTE TODAS estão com gelo
-    if (totalCartas.length > 0 && totalCartas.length === totalCongeladas.length) {
+    // Só a ARENA importa. Antes a mão entrava na conta, então uma poção ou suporte não
+    // congelado escondia o bloqueio mesmo sem existir atacante disponível em campo.
+    let cartasNaArena = Array.from(campo.querySelectorAll("div[id^='pacote-']"));
+    let todasCongeladas = cartasNaArena.length > 0 && cartasNaArena.every(pacote => pacote.classList.contains("congelada"));
+
+    if (todasCongeladas) {
         let quem = idJogador === "j1" ? "Você está" : "O Oponente está";
+        let turnoEsperado = idJogador === "j1" ? 1 : 2;
         
-        narrar(`🥶 ${quem} totalmente congelado e sem movimentos válidos! Passando o turno...`);
+        narrar(`🥶 ${quem} com todas as cartas da arena congeladas e sem ataque possível! Passando o turno...`);
         
-        // Espera 1,5 segundos para o jogador ver o aviso e passa o turno sozinho
-        setTimeout(() => {
-            passarTurno();
+        // Espera 1,5 segundo para o aviso ser lido. Depois confirma que ainda é o mesmo
+        // turno e que nenhuma carta descongelou ou entrou na arena nesse intervalo.
+        passagemAutomaticaGeloPendente = setTimeout(() => {
+            passagemAutomaticaGeloPendente = null;
+            let campoAtual = document.getElementById("campo-" + idJogador);
+            let cartasAtuais = campoAtual ? Array.from(campoAtual.querySelectorAll("div[id^='pacote-']")) : [];
+            let continuaSemAtaque = cartasAtuais.length > 0 && cartasAtuais.every(pacote => pacote.classList.contains("congelada"));
+
+            if (turnoAtivo === turnoEsperado && continuaSemAtaque) passarTurno();
         }, 1500);
         
-        return true; // Retorna true informando que o turno foi pulado
+        return true;
     }
-    return false; // Turno segue normal
+    return false;
 }
 
 function invocarToken(idBaseCarta, idCampo) {
@@ -574,6 +689,9 @@ function invocarToken(idBaseCarta, idCampo) {
         else if (modoCuraInimigo === true && !ehAliado) aplicarCuraInimiga(idDoPacote);
         else if (modoAtaqueInimigo === true && ehAliado) aplicarDanoInimigo(idDoPacote);
         else if (modoRouboGoblin === true) aplicarRouboDanoGoblin(idDoPacote);
+        // ⚔️ CAVALEIRO DAS TREVAS — tokens invocados também podem ser alvos da área.
+        else if (modoAlvoCavaleiro === true && !ehAliado) aplicarAlvoCavaleiro(idDoPacote);
+        else if (modoAlvoCavaleiroInimigo === true && ehAliado) aplicarAlvoCavaleiroInimigo(idDoPacote);
         // 🧪 2º PRIORIDADE: BRUXO (TRANSFORMAR 4)
         else if (typeof modoBruxoTransformar !== 'undefined' && modoBruxoTransformar === true) {
             let pacoteAlvo = document.getElementById(idDoPacote);
@@ -665,11 +783,11 @@ function invocarTokenPeloNomeSemHabilidade(nomeCarta, idCampo) {
                     return narrar("❌ Alvo inválido! A Poção de Gelo só pode ser usada em cartas do OPONENTE.");
                 }
                 pacoteAlvo.classList.add("congelada");
-                duracaoGelo[idSemPacote] = 3;
+                duracaoGelo[idSemPacote] = 3; // Gelo Simples: duração menor que os efeitos em área
                 if (pacotePocao) pacotePocao.remove();
                 modoGeloSimples = false;
                 idPocaoAtiva = null;
-                narrar("❄️ Alvo atingido e congelado por 2 rodadas!");
+                narrar("❄️ Alvo atingido e congelado pelo Gelo Simples!");
                 return;
             }
 
@@ -812,7 +930,7 @@ function usarFogueira(idItem, lado) {
     if (typeof atualizarTodosUnidoes === "function") atualizarTodosUnidoes();
 }
 
-function jogarCarta(idDoPacote) {
+function jogarCarta(idDoPacote, somentePrepararCampo = false) {
     if (typeof idDoPacote !== "string") return;
     if (faseAbertura === true) return escolherCartaAbertura(idDoPacote, 1);
 
@@ -884,7 +1002,7 @@ function jogarCarta(idDoPacote) {
     }
 
     let cartaBase = bancoDeCartas.find(c => c.nome === nomeDaCartaHtml);
-    if (cartaBase) ultimaCartaJogador = cartaBase;
+    if (!somentePrepararCampo && cartaBase) ultimaCartaJogador = cartaBase;
 
     let imagem = pacoteCarta.querySelector("img");
     imagem.removeAttribute("onclick"); 
@@ -967,13 +1085,13 @@ imagem.onclick = function() {
             pacoteAlvo.classList.add("congelada");
 
             let idAlvo = idDoPacote.replace("pacote-", "");
-            duracaoGelo[idAlvo] = 3; // 3 turnos = 1 rodada completa
+            duracaoGelo[idAlvo] = 3; // Gelo Simples: duração menor que os efeitos em área
 
             if (pacotePocao) pacotePocao.remove();
 
             modoGeloSimples = false;
             idPocaoAtiva = null;
-            narrar("❄️ Alvo atingido e congelado por 2 rodadas!");
+            narrar("❄️ Alvo atingido e congelado pelo Gelo Simples!");
             return;
         }
         else if (modoTraicao === true) executarTraicao(idDoPacote);
@@ -1006,13 +1124,15 @@ imagem.onclick = function() {
     let divAcoes = pacoteCarta.querySelector("div[id^='acoes-']");
     if (divAcoes) divAcoes.style.display = "block"; 
    
-    let cartaParaPassiva = { nome: nomeDaCartaHtml, passivaAtivada: false };
-    if (typeof verificarPassivaNecromante === "function") verificarPassivaNecromante(cartaParaPassiva, true); 
+    if (!somentePrepararCampo) {
+        let cartaParaPassiva = { nome: nomeDaCartaHtml, passivaAtivada: false };
+        if (typeof verificarPassivaNecromante === "function") verificarPassivaNecromante(cartaParaPassiva, true);
+    }
 
     atualizarTodosUnidoes();
 }
 
-function jogarCartaInimigo(idDoPacote) {
+function jogarCartaInimigo(idDoPacote, somentePrepararCampo = false) {
     if (typeof idDoPacote !== "string") return;
     if (faseAbertura === true) return escolherCartaAbertura(idDoPacote, 2);
 
@@ -1084,7 +1204,7 @@ function jogarCartaInimigo(idDoPacote) {
     pacoteCarta.className = "carta-inimiga";
 
     let cartaBase = bancoDeCartas.find(c => c.nome === nomeDaCartaHtml);
-    if (cartaBase) ultimaCartaOponente = cartaBase;
+    if (!somentePrepararCampo && cartaBase) ultimaCartaOponente = cartaBase;
 
     let imagem = pacoteCarta.querySelector("img");
     imagem.removeAttribute("onclick");
@@ -1107,13 +1227,13 @@ function jogarCartaInimigo(idDoPacote) {
             pacoteAlvo.classList.add("congelada");
 
             let idAlvo = idDoPacote.replace("pacote-", "");
-            duracaoGelo[idAlvo] = 3; // 3 turnos = 1 rodada completa
+            duracaoGelo[idAlvo] = 3; // Gelo Simples: duração menor que os efeitos em área
 
             if (pacotePocao) pacotePocao.remove();
 
             modoGeloSimples = false;
             idPocaoAtiva = null;
-            narrar("❄️ Inimigo atingido e congelado por 2 rodadas!");
+            narrar("❄️ Inimigo atingido e congelado pelo Gelo Simples!");
             return;
         }
         if (modoTraicao === true) { executarTraicao(idDoPacote); return; }
@@ -1185,8 +1305,10 @@ function jogarCartaInimigo(idDoPacote) {
     let divAcoes = pacoteCarta.querySelector("div[id^='acoes-']");
     if (divAcoes) divAcoes.style.display = "block";
    
-    let cartaParaPassiva = { nome: nomeDaCartaHtml, passivaAtivada: false };
-    if (typeof verificarPassivaNecromante === "function") verificarPassivaNecromante(cartaParaPassiva, false); 
+    if (!somentePrepararCampo) {
+        let cartaParaPassiva = { nome: nomeDaCartaHtml, passivaAtivada: false };
+        if (typeof verificarPassivaNecromante === "function") verificarPassivaNecromante(cartaParaPassiva, false);
+    }
 
     atualizarTodosUnidoes();
 }
@@ -1196,7 +1318,7 @@ function criarHTMLCarta(carta, funcaoJogar, classeCss, ehAliado) {
     // curar o time errado sem querer. Agora só aparece o botão do lado certo da carta.
     let btnCura = (carta.nome === 'Curandeiro' && ehAliado) ? `<button onclick="iniciarCura('${carta.idUnico}')" style="background-color: green; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Curar 💚</button>` : '';
     let btnCuraInimigo = (carta.nome === 'Curandeiro' && !ehAliado) ? `<button onclick="iniciarCuraInimigo('${carta.idUnico}')" style="background-color: green; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Curar Oponente 💚</button>` : '';
-    let btnEspecial = (carta.nome === 'Poção de Gelo' ||carta.nome === 'Bruxo' || carta.nome === 'Necromante' || carta.nome === 'Ork' || carta.nome === 'Curandeiro' || carta.nome === 'Ctrl C' || carta.nome === 'Ctrl V' || carta.nome === 'Cavaleiro das Trevas' || carta.nome === 'Goblin' || carta.nome === 'Trio de Goblin' || carta.nome === 'Barril de Goblin' || carta.nome === 'Guerreiro' || carta.nome === 'Barril de Bárbaro' || carta.nome === 'Barril'|| carta.nome === 'Bumerskeleton' || carta.nome === 'Mensageiro' || carta.nome === 'Criador' || carta.nome === 'Separado' || carta.nome === 'Separadois' || carta.nome === 'Viajante do Tempo' || carta.nome === 'Incendiário') ? `<button onclick="usarHabilidade('${carta.nome}', '${carta.idUnico}', this)" style="background-color: purple; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Especial 🔮</button>` : '';
+    let btnEspecial = (carta.nome === 'Poção de Gelo' ||carta.nome === 'Bruxo' || carta.nome === 'Necromante' || carta.nome === 'Ork' || carta.nome === 'Curandeiro' || carta.nome === 'Ctrl C' || carta.nome === 'Ctrl V' || carta.nome === 'Cavaleiro das Trevas' || carta.nome === 'Goblin' || carta.nome === 'Trio de Goblin' || carta.nome === 'Barril de Goblin' || carta.nome === 'Guerreiro' || carta.nome === 'Barril de Bárbaro' || carta.nome === 'Barril'|| carta.nome === 'Bumerskeleton' || carta.nome === 'Mensageiro' || carta.nome === 'Criador' || carta.nome === 'Separado' || carta.nome === 'Separadois' || carta.nome === 'Viajante do Tempo' || carta.nome === 'Incendiário' || carta.nome === 'Mago') ? `<button onclick="usarHabilidade('${carta.nome}', '${carta.idUnico}', this)" style="background-color: purple; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Especial 🔮</button>` : '';
     let btnLadrao = (carta.nome === 'Ladrão') ? `<button onclick="usarPassivaLadrao('${carta.idUnico}', this)" style="background-color: #f1c40f; color: black; font-weight: bold; width: 100%; margin-bottom: 2px; cursor: pointer;">Passiva 💰</button>` : '';
     let btnCtrlC = (carta.nome === 'Ctrl C' || carta.nome === 'Ctrl V') ? `<button onclick="usarPassivaCtrlC('${carta.idUnico}', this)" style="background-color: #34495e; color: white; font-weight: bold; width: 100%; margin-bottom: 2px; cursor: pointer;">Passiva 📋</button>` : '';
     // 👥 Sempre disponível (não é uso único) — deixa trocar a parceira quantas vezes quiser.
@@ -1247,6 +1369,7 @@ function criarHTMLCarta(carta, funcaoJogar, classeCss, ehAliado) {
 }
 
 function iniciarAtaque(nomeCarta, idUnico) {
+    nomeCarta = obterNomeEfetivoCarta(idUnico, nomeCarta);
     modoAlvoBarril = false; // 🚀 Cancela qualquer mira do barril se clicar noutro ataque
 
     // ❄️ TRAVA DE ATAQUE (SEU LADO)
@@ -1314,6 +1437,21 @@ function iniciarAtaque(nomeCarta, idUnico) {
         else { danoPreparado = 1; }
     }
 
+    // 👊 TRIO DE BÁRBAROS — cada Bárbaro representa 3 pontos de vida.
+    // O dano diminui conforme cada integrante do trio cai: 3 → 2 → 1.
+    if (nomeCarta === 'Trio de Bárbaros') {
+        if (vidaAtual >= 7) {
+            danoPreparado = 3;
+            narrar("⚔️ O Trio de Bárbaros está completo e ataca com 3 de dano!");
+        } else if (vidaAtual >= 4) {
+            danoPreparado = 2;
+            narrar("⚔️ Um Bárbaro caiu! Os dois restantes atacam com 2 de dano.");
+        } else {
+            danoPreparado = 1;
+            narrar("⚔️ Restou apenas um Bárbaro, que ataca com 1 de dano.");
+        }
+    }
+
     let ageComoGoblin = (nomeCarta === 'Goblin') || (nomeCarta === 'Trio de Goblin' && vidaAtual <= 2);
     if (ageComoGoblin) {
         let nomeTexto = (nomeCarta === 'Trio de Goblin') ? 'Último Goblin do Trio' : 'Goblin';
@@ -1325,9 +1463,11 @@ function iniciarAtaque(nomeCarta, idUnico) {
                 // 🤖 Se for o bot jogando, pula o pop-up (ele travaria esperando clique humano)
                 // e sempre escolhe o 2º caminho: 2 de dano agora + 1 ataque extra de graça.
                 let ehDecisaoDoBot = (typeof window !== "undefined" && window.__rpgBotJogando === true);
-                let escolha = ehDecisaoDoBot ? false : confirm(`🎲 PASSIVA DO ${nomeTexto.toUpperCase()}! Você tirou 2 no dado!\n\n[ OK ] = Dar 4 de dano de uma só vez neste alvo.\n[ CANCELAR ] = Dar apenas 2 de dano agora e ganhar um Ataque Extra livre.`);
-                if (escolha) { danoPreparado = 4; goblinAtaquesGanhos[idUnico] = false; narrar(`🎲 O ${nomeTexto} concentrou força! Causará 4 de dano num golpe único e passará a vez!`); } 
-                else { goblinAtaquesGanhos[idUnico] = true; danoPreparado = 2; narrar(`🎲 O ${nomeTexto} ativou a agilidade! Dará 2 de dano agora e terá direito a mais um ataque!`); }
+                let escolha = ehDecisaoDoBot ? false : confirm(`🎲 PASSIVA DO ${nomeTexto.toUpperCase()}! Você tirou 2 no dado!\n\n[ OK ] = Dar ${danoBase * 2} de dano de uma só vez neste alvo.\n[ CANCELAR ] = Dar apenas ${danoBase} de dano agora e ganhar um Ataque Extra livre.`);
+                // 🩹 CORREÇÃO: os dois caminhos tinham o dano fixo em 4 e 2, ignorando o dano
+                // ATUAL do Goblin (que muda com Besta/Auvex/Allsforms etc.). Agora usa danoBase.
+                if (escolha) { danoPreparado = danoBase * 2; goblinAtaquesGanhos[idUnico] = false; narrar(`🎲 O ${nomeTexto} concentrou força! Causará ${danoPreparado} de dano num golpe único e passará a vez!`); } 
+                else { goblinAtaquesGanhos[idUnico] = true; danoPreparado = danoBase; narrar(`🎲 O ${nomeTexto} ativou a agilidade! Dará ${danoPreparado} de dano agora e terá direito a mais um ataque!`); }
             } else { goblinAtaquesGanhos[idUnico] = false; narrar(`🎲 O ${nomeTexto} tirou ${dado}. Apenas um ataque normal de ${danoPreparado} de dano.`); }
         }
     }
@@ -1361,15 +1501,22 @@ function iniciarAtaque(nomeCarta, idUnico) {
 function receberAtaque(idVidaAlvo, idPacoteAlvo) {
     if (modoAtaque === true) {
         let pacoteAlvo = document.getElementById(idPacoteAlvo);
-        let nomeAlvo = pacoteAlvo.querySelector(".nome-carta").innerText;
+        let nomeAlvoExibido = pacoteAlvo.querySelector(".nome-carta").innerText;
+        let idPuro = idPacoteAlvo.replace("pacote-", "");
+        let nomeAlvo = obterNomeEfetivoCarta(idPuro, nomeAlvoExibido);
 
         // 🐴 CAVALO DE TRÓIA: não tem vida, não pode ser atacado.
         if (nomeAlvo.trim() === 'Cavalo de Tróia') {
             return narrar("🐴 O Cavalo de Tróia não pode ser atacado! Escolha outra carta.");
         }
 
-        // 🔥 LÊ O ID APENAS UMA VEZ PARA NÃO TRAVAR O JOGO
-        let idPuro = idPacoteAlvo.replace("pacote-", ""); 
+        // 🦇 VAMPI7: só pode ser atacado quando estiver com 3 ou mais de vida.
+        if (nomeAlvo.trim() === 'Vampi7') {
+            let vidaVampi7 = parseFloat(document.getElementById(idVidaAlvo).innerText) || 0;
+            if (vidaVampi7 < 3) {
+                return narrar("🦇 O Vampi7 só pode ser atacado com 3 ou mais de vida! Escolha outra carta.");
+            }
+        }
 
         // 🛡️ VERIFICAÇÃO DO BARRIL GUARDA-COSTAS (Alvo Único)
         let idDoBarrilQueProtege = cartasProtegidas[idPuro];
@@ -1399,7 +1546,8 @@ function receberAtaque(idVidaAlvo, idPacoteAlvo) {
         // 🩹 CORREÇÃO: era parseInt, que truncava vida fracionária (ex: 0.75 virava 0) — o jogo
         // tem cartas com valores quebrados (Barril de Goblin, fogo do Bumerskeleton -0.25...),
         // e isso fazia o cálculo do dano sair errado ao atacar essas cartas.
-        let vidaAtual = parseFloat(textoVida.innerText) - danoPreparado;
+        // 🩹 CORREÇÃO: nunca deixa a vida mostrar número negativo — trava em 0.
+        let vidaAtual = Math.max(0, parseFloat(textoVida.innerText) - danoPreparado);
         textoVida.innerText = vidaAtual;
         
         try {
@@ -1415,29 +1563,23 @@ function receberAtaque(idVidaAlvo, idPacoteAlvo) {
         }
 
         if (vidaAtual <= 0) {
-            let nomeDestaCarta = pacoteAlvo.querySelector(".nome-carta").innerText;
-            
-            // 🚨 UPGRADE DO CTRL C/V: Identifica se é um clone morrendo
-            if (nomeDestaCarta.includes("Ctrl")) {
-                if (typeof ctrlV !== 'undefined' && ctrlV[idPuro] && ctrlV[idPuro].nomeOriginal) {
-                    nomeDestaCarta = ctrlV[idPuro].nomeOriginal; // Assume a identidade da carta copiada!
-                    narrar(`O ${pacoteAlvo.querySelector(".nome-carta").innerText} foi destruído, ativando a passiva copiada de ${nomeDestaCarta}!`);
-                }
+            let nomeExibido = pacoteAlvo.querySelector(".nome-carta").innerText;
+            let nomeDestaCarta = obterNomeEfetivoCarta(idPuro, nomeExibido);
+            if (nomeDestaCarta !== nomeExibido) {
+                narrar(`O ${nomeExibido} foi destruído, ativando a passiva copiada de ${nomeDestaCarta}!`);
             }
 
             narrar("BUM! O alvo inimigo foi DESTRUÍDO!");
             registrarMorte(nomeDestaCarta, "j2");
             pacoteAlvo.remove();
 
-            // 💀 PASSIVA ORK
-            if (nomeDestaCarta === "Ork") {
-                let qtd = orkBuffado[idPuro] ? 3 : 2; 
-                narrar(`💀 PASSIVA: O Ork Inimigo morreu e invocou ${qtd} Goblins!`);
-                for (let i = 0; i < qtd; i++) invocarToken("goblin", "campo-j2"); 
-            }
-
-            // 🛢️ PASSIVA BARRIL DE MADEIRA
-            processarMortePassivaBarril(nomeDestaCarta, "campo-j2", "O Barril inimigo quebrou!");
+            ativarPassivasAoMorrer(
+                nomeDestaCarta,
+                idPuro,
+                "campo-j2",
+                undefined,
+                "O Barril inimigo quebrou!"
+            );
         } else {
             narrar("Pow! O alvo tomou " + danoPreparado + " de dano!");
         }
@@ -1513,7 +1655,8 @@ function inimigoAtacar(idUnico) {
 
     if (turnoAtivo !== 2) return narrar("Ainda não é o turno do Oponente atacar!");
     let pacoteInimigo = document.getElementById("pacote-" + idUnico);
-    let nomeCartaInimiga = pacoteInimigo.querySelector(".nome-carta").innerText;
+    let nomeCartaExibida = pacoteInimigo.querySelector(".nome-carta").innerText;
+    let nomeCartaInimiga = obterNomeEfetivoCarta(idUnico, nomeCartaExibida);
     let cartaAtacanteInimigo = bancoDeCartas.find(c => c.nome === nomeCartaInimiga);
     if (cartaAtacanteInimigo) ultimaCartaOponente = cartaAtacanteInimigo;
 
@@ -1561,6 +1704,20 @@ function inimigoAtacar(idUnico) {
         else { danoInimigoPreparado = 1; }
     }
 
+    // 👊 Mesma regressão para o Trio de Bárbaros controlado pelo oponente/bot.
+    if (nomeCartaInimiga === 'Trio de Bárbaros') {
+        if (vidaAtual >= 7) {
+            danoInimigoPreparado = 3;
+            narrar("⚔️ O Trio de Bárbaros inimigo está completo e ataca com 3 de dano!");
+        } else if (vidaAtual >= 4) {
+            danoInimigoPreparado = 2;
+            narrar("⚔️ Um Bárbaro inimigo caiu! Os dois restantes atacam com 2 de dano.");
+        } else {
+            danoInimigoPreparado = 1;
+            narrar("⚔️ Restou um Bárbaro inimigo, que ataca com 1 de dano.");
+        }
+    }
+
     let ageComoGoblin = (nomeCartaInimiga === 'Goblin') || (nomeCartaInimiga === 'Trio de Goblin' && vidaAtual <= 2);
     if (ageComoGoblin) {
         let nomeTexto = (nomeCartaInimiga === 'Trio de Goblin') ? 'Último Goblin do Trio inimigo' : 'Goblin inimigo';
@@ -1570,8 +1727,10 @@ function inimigoAtacar(idUnico) {
             document.getElementById("dado-tela").innerText = "🎲 " + dado;
             if (dado === 2) {
                 let qtdAliados = aliadosNoCampo.length;
-                if (qtdAliados === 1) { danoInimigoPreparado = 4; goblinAtaquesGanhos[idUnico] = false; narrar(`🎲 O ${nomeTexto} tirou 2 e concentrou 4 de dano brutal!`); } 
-                else { goblinAtaquesGanhos[idUnico] = true; danoInimigoPreparado = 2; narrar(`🎲 O ${nomeTexto} tirou 2! Atacará com 2 de dano e fará mais um ataque!`); }
+                // 🩹 CORREÇÃO: mesmo problema do lado do jogador — dano fixo em 4 e 2, ignorando
+                // o dano ATUAL do Goblin (que muda com Besta/Auvex/Allsforms etc.).
+                if (qtdAliados === 1) { danoInimigoPreparado = danoLido * 2; goblinAtaquesGanhos[idUnico] = false; narrar(`🎲 O ${nomeTexto} tirou 2 e concentrou ${danoInimigoPreparado} de dano brutal!`); } 
+                else { goblinAtaquesGanhos[idUnico] = true; danoInimigoPreparado = danoLido; narrar(`🎲 O ${nomeTexto} tirou 2! Atacará com ${danoInimigoPreparado} de dano e fará mais um ataque!`); }
             } else { goblinAtaquesGanhos[idUnico] = false; narrar(`🎲 O ${nomeTexto} tirou ${dado}. Ataque normal.`); }
         }
     }
@@ -1605,15 +1764,23 @@ function inimigoAtacar(idUnico) {
 
 function aplicarDanoInimigo(idPacoteAlvo) {
     let pacoteAlvo = document.getElementById(idPacoteAlvo);
-    let nomeAlvo = pacoteAlvo.querySelector(".nome-carta").innerText;
+    let idPuro = idPacoteAlvo.replace("pacote-", "");
+    let nomeAlvoExibido = pacoteAlvo.querySelector(".nome-carta").innerText;
+    let nomeAlvo = obterNomeEfetivoCarta(idPuro, nomeAlvoExibido);
 
     // 🐴 CAVALO DE TRÓIA: não tem vida, não pode ser atacado.
     if (nomeAlvo.trim() === 'Cavalo de Tróia') {
         return narrar("🐴 O Cavalo de Tróia inimigo não pode ser atacado! Escolha outra carta.");
     }
 
-    // 🔥 LÊ O ID APENAS UMA VEZ
-    let idPuro = idPacoteAlvo.replace("pacote-", ""); 
+    // 🦇 VAMPI7: só pode ser atacado quando estiver com 3 ou mais de vida.
+    if (nomeAlvo.trim() === 'Vampi7') {
+        let idVidaVampi7 = idPacoteAlvo.replace("pacote-", "vida-");
+        let vidaVampi7 = parseFloat(document.getElementById(idVidaVampi7).innerText) || 0;
+        if (vidaVampi7 < 3) {
+            return narrar("🦇 O Vampi7 inimigo só pode ser atacado com 3 ou mais de vida! Escolha outra carta.");
+        }
+    }
 
     // 🛡️ VERIFICAÇÃO DO BARRIL GUARDA-COSTAS
     let idDoBarrilQueProtege = cartasProtegidas[idPuro];
@@ -1641,7 +1808,8 @@ function aplicarDanoInimigo(idPacoteAlvo) {
 
     let idVida = idPacoteAlvo.replace("pacote-", "vida-");
     let textoVida = document.getElementById(idVida);
-    let vidaAtual = parseFloat(textoVida.innerText) - danoInimigoPreparado;
+    // 🩹 CORREÇÃO: nunca deixa a vida mostrar número negativo — trava em 0.
+    let vidaAtual = Math.max(0, parseFloat(textoVida.innerText) - danoInimigoPreparado);
     textoVida.innerText = vidaAtual;
 
     // 🪃 COLOQUE ESTE BLOCO AQUI: Ricochete do Bumerskeleton do Inimigo
@@ -1656,29 +1824,23 @@ function aplicarDanoInimigo(idPacoteAlvo) {
     }
 
     if (vidaAtual <= 0) {
-        let nomeDestaCarta = pacoteAlvo.querySelector(".nome-carta").innerText;
-        
-        // 🚨 UPGRADE DO CTRL C/V: Identifica se é um clone morrendo
-        if (nomeDestaCarta.includes("Ctrl")) {
-            if (typeof ctrlV !== 'undefined' && ctrlV[idPuro] && ctrlV[idPuro].nomeOriginal) {
-                nomeDestaCarta = ctrlV[idPuro].nomeOriginal; 
-                narrar(`Seu ${pacoteAlvo.querySelector(".nome-carta").innerText} foi destruído, ativando a passiva copiada de ${nomeDestaCarta}!`);
-            }
+        let nomeExibido = pacoteAlvo.querySelector(".nome-carta").innerText;
+        let nomeDestaCarta = obterNomeEfetivoCarta(idPuro, nomeExibido);
+        if (nomeDestaCarta !== nomeExibido) {
+            narrar(`Seu ${nomeExibido} foi destruído, ativando a passiva copiada de ${nomeDestaCarta}!`);
         }
 
         narrar("Sua carta foi DESTRUÍDA pelo oponente!");
         registrarMorte(nomeDestaCarta, "j1");
         pacoteAlvo.remove();
 
-        // 💀 PASSIVA ORK
-        if (nomeDestaCarta === "Ork") {
-            let qtd = orkBuffado[idPuro] ? 3 : 2; 
-            narrar(`💀 PASSIVA: O seu Ork morreu e invocou ${qtd} Goblins!`);
-            for (let i = 0; i < qtd; i++) invocarToken("goblin", "campo-j1"); 
-        }
-
-        // 🛢️ PASSIVA BARRIL DE MADEIRA (ALIADO)
-        processarMortePassivaBarril(nomeDestaCarta, "campo-j1", "Seu Barril quebrou!");
+        ativarPassivasAoMorrer(
+            nomeDestaCarta,
+            idPuro,
+            "campo-j1",
+            undefined,
+            "Seu Barril quebrou!"
+        );
     } else {
         narrar(`Sua carta sofreu ${danoInimigoPreparado} de dano!`);
     }
@@ -1737,10 +1899,9 @@ function atualizarUnidoesNoCampo(campoHTML) {
     // string que não é usada em lugar nenhum do jogo), então o Ctrl C nunca recebia o bônus do
     // Unidão mesmo depois de copiar a passiva dele. Agora também conta quem copiou "Unidão".
     let ehUnidao = function (pacote) {
-        let nome = pacote.querySelector(".nome-carta").innerText;
-        if (nome === "Unidão") return true;
         let idUnico = pacote.id.replace("pacote-", "");
-        return !!(typeof ctrlV !== 'undefined' && ctrlV[idUnico] && ctrlV[idUnico].nomeOriginal === "Unidão");
+        let nome = pacote.querySelector(".nome-carta").innerText;
+        return obterNomeEfetivoCarta(idUnico, nome) === "Unidão";
     };
 
     let unidoes = todasAsCartas.filter(ehUnidao);
@@ -1759,21 +1920,26 @@ function atualizarUnidoesNoCampo(campoHTML) {
         }
     });
 
-    // 2. Aplica o bónus ao Unidão
+    // 2. Atualiza somente a parcela variável da Passiva do Unidão.
+    // O valor mostrado na tela também pode conter melhorias permanentes (Auvex, Besta,
+    // bônus do Curandeiro, Ctrl C/V etc.). A versão antiga sempre fazia `1 + maiorDano`
+    // e apagava essas melhorias. Agora removemos o bônus variável anterior, preservamos
+    // o dano próprio já modificado e somamos o novo maior dano aliado.
     unidoes.forEach(pacote => {
         let idUnico = pacote.id.replace("pacote-", "");
         let spanDano = document.getElementById("dano-" + idUnico);
         
         if (spanDano) {
-            // O dano base da carta Unidão é 1. Somamos o maiorDano encontrado.
-            let novoDano = 1 + maiorDano; 
+            let danoAtual = parseFloat(spanDano.innerText) || 0;
+            let bonusVariavelAnterior = bonusUnidao[idUnico] || 0;
+            let danoProprioModificado = Math.max(0, danoAtual - bonusVariavelAnterior);
+            let novoDano = danoProprioModificado + maiorDano;
             spanDano.innerText = novoDano;
 
-            if (novoDano > 1) {
+            if (novoDano !== danoAtual) {
                 mostrarEfeitoAtaque(idUnico);
             }
-            // Opcional: Salva no objeto para referência se precisares depois
-            bonusUnidao[idUnico] = novoDano;
+            bonusUnidao[idUnico] = maiorDano;
         }
     });
 }
@@ -1799,7 +1965,8 @@ function dispararVampi7JuntoDoAtaque(idAtacante, idPacoteAlvo) {
 
     let vampiros = Array.from(campoDoAtacante.getElementsByClassName(classeMesmoTime)).filter(pacote => {
         let nomeEl = pacote.querySelector(".nome-carta");
-        return nomeEl && nomeEl.innerText.trim() === "Vampi7" && pacote.id !== "pacote-" + idAtacante;
+        let idP = pacote.id.replace("pacote-", "");
+        return nomeEl && obterNomeEfetivoCarta(idP, nomeEl.innerText.trim()) === "Vampi7" && pacote.id !== "pacote-" + idAtacante;
     });
     if (vampiros.length === 0) return;
 
@@ -1842,7 +2009,7 @@ function dispararPortableJuntoDoAtaque(idAtacante, idPacoteAlvo) {
     let portables = Array.from(campoDoAtacante.getElementsByClassName(classeMesmoTime)).filter(pacote => {
         let nomeEl = pacote.querySelector(".nome-carta");
         let idP = pacote.id.replace("pacote-", "");
-        return nomeEl && nomeEl.innerText.trim() === "Portable" && pacote.id !== "pacote-" + idAtacante && portableDuracao[idP] > 0;
+        return nomeEl && obterNomeEfetivoCarta(idP, nomeEl.innerText.trim()) === "Portable" && pacote.id !== "pacote-" + idAtacante && portableDuracao[idP] > 0;
     });
     if (portables.length === 0) return;
 
@@ -1868,6 +2035,21 @@ function registrarMorte(nomeCarta, lado) {
     let base = bancoDeCartas.find(c => c.nome === nomeCarta);
     if (!base) return;
     cemiterio[lado].push({ id: base.id, nome: base.nome, img: base.img, vida: base.vida, dano: base.dano });
+}
+
+// Centraliza as passivas que acontecem quando uma carta MORRE. Antes cada tipo de dano
+// repetia essa lógica por conta própria; impacto e ricochete só removiam a carta, então o
+// Ork podia desaparecer sem criar os Goblins. Todo caminho de morte em campo chama isto.
+function ativarPassivasAoMorrer(nomeCarta, idUnico, campoDestino, mensagemOrk, mensagemBarril) {
+    if (nomeCarta === "Ork") {
+        let qtd = (typeof orkBuffado !== "undefined" && orkBuffado[idUnico]) ? 3 : 2;
+        narrar(mensagemOrk || `💀 PASSIVA: O Ork morreu e invocou ${qtd} Goblins!`);
+        for (let i = 0; i < qtd; i++) invocarToken("goblin", campoDestino);
+    }
+
+    if (typeof processarMortePassivaBarril === "function") {
+        processarMortePassivaBarril(nomeCarta, campoDestino, mensagemBarril || "O Barril foi destruído!");
+    }
 }
 
 function aplicarDanoAtaqueArea(idPacoteAlvo, dano, isInimigo) {
@@ -1993,7 +2175,8 @@ function aplicarDanoCavaloDeTroia(ladoInimigo, dano) {
 
             let txtVida = document.getElementById("vida-" + idPuro);
             if (!txtVida) return;
-            let vidaAtual = parseFloat(txtVida.innerText) - dano;
+            // 🩹 CORREÇÃO: nunca deixa a vida mostrar número negativo — trava em 0.
+            let vidaAtual = Math.max(0, parseFloat(txtVida.innerText) - dano);
             txtVida.innerText = vidaAtual;
             if (typeof mostrarEfeitoPerdaVida === "function") mostrarEfeitoPerdaVida(idPuro);
             if (vidaAtual <= 0) {
@@ -2012,16 +2195,18 @@ function aplicarDanoDireto(idPacoteAlvo, dano, isInimigo) {
 
     // 🐴 CAVALO DE TRÓIA: não tem vida, não pode ser atacado (nem por ataques em área, poções ou habilidades).
     let pacoteCheck = document.getElementById(idPacoteAlvo);
-    let nomeCheck = pacoteCheck && pacoteCheck.querySelector(".nome-carta") ? pacoteCheck.querySelector(".nome-carta").innerText.trim() : "";
+    let nomeCheckExibido = pacoteCheck && pacoteCheck.querySelector(".nome-carta") ? pacoteCheck.querySelector(".nome-carta").innerText.trim() : "";
+    let nomeCheck = obterNomeEfetivoCarta(idPuro, nomeCheckExibido);
     if (nomeCheck === 'Cavalo de Tróia') return;
 
-    let vidaAtual = parseFloat(txtVida.innerText) - dano;
+    let vidaAtual = Math.max(0, parseFloat(txtVida.innerText) - dano);
     txtVida.innerText = vidaAtual;
 
     if (vidaAtual <= 0) {
         let pacote = document.getElementById(idPacoteAlvo);
         if (!pacote) return;
-        let nomeDestaCarta = pacote.querySelector(".nome-carta").innerText;
+        let nomeExibido = pacote.querySelector(".nome-carta").innerText;
+        let nomeDestaCarta = obterNomeEfetivoCarta(idPuro, nomeExibido);
         // 🩹 CORREÇÃO: descobre o lado do Ork pela posição real dele no campo (igual já
         // era feito certo no roubo do Ladrão), em vez de confiar no parâmetro "isInimigo" —
         // ele não tem um significado consistente entre quem chama esta função, então usar
@@ -2030,13 +2215,7 @@ function aplicarDanoDireto(idPacoteAlvo, dano, isInimigo) {
         registrarMorte(nomeDestaCarta, campoDestino === "campo-j2" ? "j2" : "j1");
         pacote.remove();
         
-        if (nomeDestaCarta === "Ork") {
-            let qtd = orkBuffado[idPuro] ? 3 : 2;
-            narrar(`💀 PASSIVA: O Ork morreu e invocou ${qtd} Goblins!`);
-            for (let i = 0; i < qtd; i++) invocarToken("goblin", campoDestino);
-        }
-
-        processarMortePassivaBarril(nomeDestaCarta, campoDestino, "O Barril foi destruído!");
+        ativarPassivasAoMorrer(nomeDestaCarta, idPuro, campoDestino);
     }
 }
 function obterCartasAdjacentes(idPacoteAlvo) {
@@ -2863,6 +3042,18 @@ function roubarCartaCracker(idPacoteDomOriginal, origem, idItem, ehAliado) {
     crackerPendente = null;
 
     narrar(`🃏 Cracker! [${nomeCarta}] foi roubado(a) do ${origem === "campo" ? "campo" : "mão"} do adversário${origem === "campo" ? ", voltando com os atributos originais," : ""} e foi pra mão ${ehAliado ? "aliada" : "do oponente"}!`);
+
+    // 🤖 Se o jogador roubou a única carta que o bot tinha em campo, ele ficaria sem
+    // alvo para atacar durante o próprio turno. O bot pode reagir colocando UMA tropa da mão,
+    // sem ganhar um turno completo nem atacar fora de hora. No modo PvP local esta função
+    // não existe, portanto o segundo jogador continua totalmente manual.
+    if (ehAliado && origem === "campo") {
+        let campoDoBot = document.getElementById("campo-j2");
+        let campoFicouVazio = campoDoBot && campoDoBot.querySelectorAll("div[id^='pacote-']").length === 0;
+        if (campoFicouVazio && typeof window.botReporCampoAposCracker === "function") {
+            setTimeout(() => window.botReporCampoAposCracker(), 500);
+        }
+    }
 }
 
 // 💥 ALLSFORMS — dá +3 de dano pra TODAS as tropas do próprio time já em campo (suportes/poções
@@ -3093,6 +3284,52 @@ function executarTraicao(idAlvoPacote) {
     // 🔥 AQUI ESTÁ A MÁGICA: Passa o turno automaticamente após a traição!
     passarTurno();
 }
+// Reconstrói a carta como um Bárbaro de verdade. Assim ela recebe a imagem, os botões
+// e os cliques normais da nova forma, sem recuperar a vida perdida pelo Barril.
+function transformarBarrilBarbaroEmBarbaro(idUnico, ehAliado) {
+    let pacoteAntigo = document.getElementById("pacote-" + idUnico);
+    let barbaroBase = bancoDeCartas.find(c => c.nome === "Bárbaro");
+    if (!pacoteAntigo || !barbaroBase || !pacoteAntigo.parentElement) return null;
+
+    let vidaEl = document.getElementById("vida-" + idUnico);
+    let vidaAntesDaTransformacao = vidaEl ? parseFloat(vidaEl.innerText) : 2;
+    if (!Number.isFinite(vidaAntesDaTransformacao)) vidaAntesDaTransformacao = 2;
+
+    // O Bárbaro tem no máximo 2 de vida ao nascer, mas nunca cura o dano que o Barril já tomou.
+    let vidaDoBarbaro = Math.max(0, Math.min(2, vidaAntesDaTransformacao));
+    let cartaBarbaro = {
+        ...barbaroBase,
+        idUnico: idUnico,
+        vida: vidaDoBarbaro,
+        dano: 2
+    };
+
+    let html = criarHTMLCarta(
+        cartaBarbaro,
+        ehAliado ? "jogarCarta" : "jogarCartaInimigo",
+        ehAliado ? "carta-aliada" : "carta-inimiga",
+        ehAliado
+    );
+    let temp = document.createElement("div");
+    temp.innerHTML = html.trim();
+    let pacoteNovo = temp.firstElementChild;
+    let estavaCongelado = pacoteAntigo.classList.contains("congelada");
+
+    pacoteAntigo.parentElement.insertBefore(pacoteNovo, pacoteAntigo);
+    pacoteAntigo.remove();
+
+    if (estavaCongelado) pacoteNovo.classList.add("congelada");
+
+    // Se Ctrl C/V copiou o Barril, a cópia também termina ao sair o Bárbaro.
+    if (typeof ctrlV !== "undefined" && ctrlV[idUnico]) delete ctrlV[idUnico];
+
+    // Prepara os controles da arena sem contar a transformação como uma nova invocação.
+    if (ehAliado) jogarCarta("pacote-" + idUnico, true);
+    else jogarCartaInimigo("pacote-" + idUnico, true);
+
+    return pacoteNovo;
+}
+
 function aplicarAlvoBarrilBarbaro(idPacoteAlvo) {
     let pacoteAlvo = document.getElementById(idPacoteAlvo);
     if (!pacoteAlvo) return;
@@ -3101,20 +3338,31 @@ function aplicarAlvoBarrilBarbaro(idPacoteAlvo) {
     let txtVidaAlvo = document.getElementById("vida-" + idSemPacoteAlvo);
     if (!txtVidaAlvo) return;
 
-    // Descobre automaticamente de qual lado é o barril
-    let ehBarrilAliado = !idBarrilAtivo.includes("inimigo");
+    // Descobre o lado pela posição real. Um Barril de Bárbaro invocado pelo Necromante
+    // pode ter ID "necro_..." mesmo pertencendo ao bot.
+    let pacoteBarrilAtivo = document.getElementById("pacote-" + idBarrilAtivo);
+    let ehBarrilAliado = pacoteBarrilAtivo
+        ? !!pacoteBarrilAtivo.closest("#campo-j1")
+        : !idBarrilAtivo.includes("inimigo");
     let textoNarracao = ehBarrilAliado ? "🪵 Seu Barril atingiu o alvo!" : "🪵 O Barril Inimigo atingiu sua carta!";
 
     // 1. Dano de Impacto Fixo (3 de Dano)
-    let vidaAtual = parseFloat(txtVidaAlvo.innerText) - 3;
+    // 🩹 CORREÇÃO: nunca deixa a vida mostrar número negativo — trava em 0.
+    let vidaAtual = Math.max(0, parseFloat(txtVidaAlvo.innerText) - 3);
     txtVidaAlvo.innerText = vidaAtual;
 
     if (vidaAtual <= 0) {
         textoNarracao += " O alvo principal foi esmagado!";
-        let nomeAlvoBarrilBarbaro = pacoteAlvo.querySelector(".nome-carta").innerText.trim();
+        let nomeAlvoExibido = pacoteAlvo.querySelector(".nome-carta").innerText.trim();
+        let nomeAlvoBarrilBarbaro = obterNomeEfetivoCarta(idSemPacoteAlvo, nomeAlvoExibido);
         let ladoAlvoBarrilBarbaro = pacoteAlvo.closest("#campo-j1") ? "j1" : "j2";
         registrarMorte(nomeAlvoBarrilBarbaro, ladoAlvoBarrilBarbaro);
         pacoteAlvo.remove();
+        ativarPassivasAoMorrer(
+            nomeAlvoBarrilBarbaro,
+            idSemPacoteAlvo,
+            "campo-" + ladoAlvoBarrilBarbaro
+        );
     } else {
         textoNarracao += " Causando 3 de dano direto.";
     }
@@ -3130,13 +3378,21 @@ function aplicarAlvoBarrilBarbaro(idPacoteAlvo) {
             if (vizinho.id && vizinho.id.includes("pacote-")) {
                 let txtVidaVizinho = document.getElementById("vida-" + vizinho.id.replace("pacote-", ""));
                 if (txtVidaVizinho) {
-                    let vidaViz = parseFloat(txtVidaVizinho.innerText) - 1;
+                    // 🩹 CORREÇÃO: nunca deixa a vida mostrar número negativo — trava em 0.
+                    let vidaViz = Math.max(0, parseFloat(txtVidaVizinho.innerText) - 1);
                     txtVidaVizinho.innerText = vidaViz;
                     if (vidaViz <= 0) {
-                        let nomeVizinhoBarril = vizinho.querySelector(".nome-carta") ? vizinho.querySelector(".nome-carta").innerText.trim() : "";
+                        let idVizinhoBarril = vizinho.id.replace("pacote-", "");
+                        let nomeVizinhoExibido = vizinho.querySelector(".nome-carta") ? vizinho.querySelector(".nome-carta").innerText.trim() : "";
+                        let nomeVizinhoBarril = obterNomeEfetivoCarta(idVizinhoBarril, nomeVizinhoExibido);
                         let ladoVizinhoBarril = vizinho.closest("#campo-j1") ? "j1" : "j2";
                         registrarMorte(nomeVizinhoBarril, ladoVizinhoBarril);
                         vizinho.remove();
+                        ativarPassivasAoMorrer(
+                            nomeVizinhoBarril,
+                            idVizinhoBarril,
+                            "campo-" + ladoVizinhoBarril
+                        );
                     }
                 }
             }
@@ -3151,70 +3407,8 @@ function aplicarAlvoBarrilBarbaro(idPacoteAlvo) {
     // 🛸 PORTABLE — ataca junto enquanto a bateria durar.
     dispararPortableJuntoDoAtaque(idBarrilAtivo, idPacoteAlvo);
 
-    // 3. Mutação: Barril vira Bárbaro (2/2)
-    let pacoteBarril = document.getElementById("pacote-" + idBarrilAtivo);
-    if (pacoteBarril) {
-        pacoteBarril.querySelector(".nome-carta").innerText = "Bárbaro";
-        document.getElementById("vida-" + idBarrilAtivo).innerText = "2";
-        document.getElementById("dano-" + idBarrilAtivo).innerText = "2";
-        
-        // Remove o botão especial permanente
-        let btnEspecial = pacoteBarril.querySelector("button[onclick*='usarHabilidade']");
-        if (btnEspecial) btnEspecial.remove();
-
-        // Arruma o Botão de Atacar (Apenas para o Aliado. O Inimigo puxa pelo ID automático)
-        if (ehBarrilAliado) {
-            let btnAtacar = pacoteBarril.querySelector("button[onclick*='iniciarAtaque']");
-            if (btnAtacar) btnAtacar.setAttribute("onclick", `iniciarAtaque('Bárbaro', '${idBarrilAtivo}')`);
-        }
-
-        // Arruma o clique na Imagem dependendo de quem é o dono da carta
-        let imagem = pacoteBarril.querySelector("img") || pacoteBarril.querySelector(".imagem-carta");
-        let idBarrilLocal = idBarrilAtivo;
-        
-        if (ehBarrilAliado) {
-            imagem.onclick = function() {
-                let idDoPacoteBarril = "pacote-" + idBarrilLocal;
-                // 🩹 CORREÇÃO: essa cadeia só tinha 3 checagens (Traição, ataque do inimigo,
-                // cura) — faltavam TODOS os outros modos (Ladrão, suportes, Cavaleiro, etc.).
-                // Se qualquer um desses estivesse ativo quando o Bárbaro recém-nascido fosse
-                // clicado, o clique caía direto no "senão" errado (iniciar ataque), fazendo
-                // parecer que a carta simplesmente não respondia ao que devia. Agora a cadeia
-                // é a mesma usada pelas cartas normais do seu lado.
-                if (typeof modoTraicao !== 'undefined' && modoTraicao) executarTraicao(idDoPacoteBarril);
-                else if (typeof modoLadrao !== 'undefined' && modoLadrao === true && turnoAtivo === 1 && faseLadrao === 2) aplicarRouboBeneficio(idDoPacoteBarril);
-                else if (typeof modoLadrao !== 'undefined' && modoLadrao === true && turnoAtivo === 2 && faseLadrao === 1) aplicarRouboPrejuizo(idDoPacoteBarril);
-                else if (typeof modoLadrao !== 'undefined' && modoLadrao === true) narrar("❌ Alvo inválido para o Ladrão! Clique na carta certa pra continuar o roubo.");
-                else if (typeof modoAtaqueInimigo !== 'undefined' && modoAtaqueInimigo) aplicarDanoInimigo(idDoPacoteBarril);
-                else if (typeof modoAlvoBarrilBarbaro !== 'undefined' && (modoAlvoBarrilBarbaro || modoAlvoBarrilBarbaroInimigo)) aplicarAlvoBarrilBarbaro(idDoPacoteBarril);
-                else if (typeof modoCura !== 'undefined' && modoCura) aplicarCuraAliada(idDoPacoteBarril);
-                else if (typeof modoRouboGoblin !== 'undefined' && modoRouboGoblin === true) aplicarRouboDanoGoblin(idDoPacoteBarril);
-                else if (typeof modoAlvoBarril !== 'undefined' && modoAlvoBarril === true) aplicarAlvoBarril(idDoPacoteBarril);
-                else if (typeof modoAlvoCavaleiroInimigo !== 'undefined' && modoAlvoCavaleiroInimigo === true) aplicarAlvoCavaleiroInimigo(idDoPacoteBarril);
-                else if (typeof modoParceriaSeparado !== 'undefined' && modoParceriaSeparado === true) aplicarParceriaSeparado(idDoPacoteBarril);
-                else if (typeof modoPrenderNoTempo !== 'undefined' && modoPrenderNoTempo === true) aplicarPrenderNoTempo(idDoPacoteBarril);
-                else if (typeof suportePreparado !== 'undefined' && suportePreparado !== null) equiparSuporte(idBarrilLocal);
-                else iniciarAtaque("Bárbaro", idBarrilLocal);
-            };
-        } else {
-            imagem.onclick = function() {
-                let idDoPacoteBarril = "pacote-" + idBarrilLocal;
-                // 🩹 CORREÇÃO: mesma ideia do lado aliado — cadeia completa em vez de só 2 checagens.
-                if (typeof modoTraicao !== 'undefined' && modoTraicao) executarTraicao(idDoPacoteBarril);
-                else if (typeof modoLadrao !== 'undefined' && modoLadrao === true && turnoAtivo === 1 && faseLadrao === 1) aplicarRouboPrejuizo(idDoPacoteBarril);
-                else if (typeof modoLadrao !== 'undefined' && modoLadrao === true && turnoAtivo === 2 && faseLadrao === 2) aplicarRouboBeneficio(idDoPacoteBarril);
-                else if (typeof modoLadrao !== 'undefined' && modoLadrao === true) narrar("❌ Alvo inválido para o Ladrão! Clique na carta certa pra continuar o roubo.");
-                else if (typeof modoCuraInimigo !== 'undefined' && modoCuraInimigo) aplicarCuraInimiga(idDoPacoteBarril);
-                else if (typeof modoAlvoBarrilBarbaro !== 'undefined' && (modoAlvoBarrilBarbaro || modoAlvoBarrilBarbaroInimigo)) aplicarAlvoBarrilBarbaro(idDoPacoteBarril);
-                else if (typeof modoRouboGoblin !== 'undefined' && modoRouboGoblin === true) aplicarRouboDanoGoblin(idDoPacoteBarril);
-                else if (typeof modoAlvoCavaleiro !== 'undefined' && modoAlvoCavaleiro === true) aplicarAlvoCavaleiro(idDoPacoteBarril);
-                else if (typeof modoParceriaSeparado !== 'undefined' && modoParceriaSeparado === true) aplicarParceriaSeparado(idDoPacoteBarril);
-                else if (typeof modoPrenderNoTempo !== 'undefined' && modoPrenderNoTempo === true) aplicarPrenderNoTempo(idDoPacoteBarril);
-                else if (typeof suportePreparado !== 'undefined' && suportePreparado !== null) equiparSuporte(idBarrilLocal);
-                else receberAtaque("vida-" + idBarrilLocal, "pacote-" + idBarrilLocal);
-            };
-        }
-    }
+    // 3. Transformação real: preserva a vida restante e recria a carta como Bárbaro 2/2.
+    transformarBarrilBarbaroEmBarbaro(idBarrilAtivo, ehBarrilAliado);
 
     // 4. Limpa as variáveis e passa a vez
     modoAlvoBarrilBarbaro = false;
@@ -3327,7 +3521,8 @@ function executarChainBumerangue(idBumerskeleton, idPrimeiroAlvo, campoAlvoId, a
                 
                 if (txtVida) {
                     let vidaAtual = parseFloat(txtVida.innerText);
-                    let novaVida = vidaAtual - danoDestaBatida;
+                    // 🩹 CORREÇÃO: nunca deixa a vida mostrar número negativo — trava em 0.
+                    let novaVida = Math.max(0, vidaAtual - danoDestaBatida);
                     txtVida.innerText = novaVida;
                     
                     alvosDoBumerangue[idBumerskeleton].push(idOutroAlvo);
@@ -3336,9 +3531,11 @@ function executarChainBumerangue(idBumerskeleton, idPrimeiroAlvo, campoAlvoId, a
                     narrar(`🪃 O bumerangue ricocheteou em [${nomeAlvo}] e causou ${danoDestaBatida} de Dano!`);
 
                     if (novaVida <= 0) {
+                        let nomeEfetivoAlvo = obterNomeEfetivoCarta(idOutroAlvo, nomeAlvo);
                         narrar(`BUM! [${nomeAlvo}] foi destruído pelo ricochete!`);
-                        registrarMorte(nomeAlvo, campoAlvoId === "campo-j2" ? "j2" : "j1");
+                        registrarMorte(nomeEfetivoAlvo, campoAlvoId === "campo-j2" ? "j2" : "j1");
                         pacote.remove();
+                        ativarPassivasAoMorrer(nomeEfetivoAlvo, idOutroAlvo, campoAlvoId);
                     }
                 }
             }, delay);

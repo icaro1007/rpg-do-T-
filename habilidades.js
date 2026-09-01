@@ -247,8 +247,15 @@ function usarHabilidade(nome, idUnico, botao, aoConcluir) {
     }
     // 🛡️ HABILIDADE ESPECIAL: BARRIL (Criar Vínculo de Guarda-Costas)
     if (nome === 'Barril') {
-        if (idUnico.includes("inimigo")) {
-            // Se o ID tem "inimigo", é o Barril do P2
+        // O dono precisa ser descoberto pela posição REAL da carta. Cartas trazidas pelo
+        // Necromante recebem IDs "necro_...", sem a palavra "inimigo", mesmo quando são do
+        // P2; usar o ID fazia o Barril do bot proteger uma carta do jogador e criava um loop.
+        let pacoteBarril = document.getElementById("pacote-" + idUnico);
+        let barrilEhDoInimigo = pacoteBarril
+            ? !!pacoteBarril.closest('#campo-j2, #mao-j2')
+            : idUnico.includes("inimigo"); // fallback apenas se a carta já tiver saído da tela
+
+        if (barrilEhDoInimigo) {
             modoProtecaoBarrilInimigo = true;
             idBarrilProtetor = idUnico;
             narrar("🛡️ MODO ESCUDO INIMIGO: Clique em uma carta do OPONENTE para o Barril proteger!");
@@ -320,7 +327,7 @@ function usarHabilidade(nome, idUnico, botao, aoConcluir) {
         narrar(`🧪 Você usou a Poção de Gelo! O dado rolou: ${dado}`);
 
         if (dado === 5) {
-            narrar("❄️ NEVASCA! Todas as cartas inimigas (campo e mão) foram congeladas por 1,5 rodadas!");
+            narrar("❄️ NEVASCA! Todas as cartas inimigas (campo e mão) foram congeladas por 1 rodada a mais!");
             
             let pacotePocao = document.getElementById("pacote-" + idUnico);
             let aPocaoEAliada = true;
@@ -344,8 +351,8 @@ function usarHabilidade(nome, idUnico, botao, aoConcluir) {
                     // Extrai o ID único da carta removendo o prefixo "pacote-"
                     let idCarta = pacoteCard.id.replace("pacote-", "");
                     
-                    // Define a duração exata para 3 turnos (1,5 rodadas)
-                    duracaoGelo[idCarta] = 3; 
+                    // Antes eram 3 passagens; +2 equivale a uma rodada completa a mais.
+                    duracaoGelo[idCarta] = 5;
                     
                     // Aplica o visual de gelo direto na carta!
                     pacoteCard.classList.add("congelada");
@@ -409,11 +416,11 @@ function usarHabilidade(nome, idUnico, botao, aoConcluir) {
                         danoExtra += parseFloat(elemDano.innerText);
                     }
 
-                    // 🚨 NOVIDADE AQUI: Se a carta trazida for OUTRO Necromante, ativa a passiva dele automaticamente!
-                    let nomeDestaCarta = pacoteCarta.querySelector(".nome-carta").innerText;
-                    if (nomeDestaCarta === 'Necromante') {
-                        verificarPassivaNecromante({nome: "Necromante", passivaAtivada: false}, ehAliado);
-                    }
+                    // A invocação direta pulava o clique normal de "jogar carta" e deixava a
+                    // imagem com o comportamento antigo da mão. Ativamos o modo de batalha
+                    // agora; isso também dispara corretamente a passiva de outro Necromante.
+                    if (ehAliado) jogarCarta(pacoteCarta.id);
+                    else jogarCartaInimigo(pacoteCarta.id);
                 });
 
                 let danoTotal = 1 + danoExtra;
@@ -617,6 +624,45 @@ function usarHabilidade(nome, idUnico, botao, aoConcluir) {
         notificar(dado >= 1 && dado <= 4);
         return; // Ação rápida, não passa o turno!
     }
+    // --- HABILIDADE: MAGO (VENENO) ---
+    if (nome === 'Mago') {
+        let pacoteMago = document.getElementById("pacote-" + idUnico);
+        if (!pacoteMago) { notificar(false); return; }
+
+        let ehAliadoMago = pacoteMago.closest("#campo-j1") !== null;
+        if ((ehAliadoMago && turnoAtivo !== 1) || (!ehAliadoMago && turnoAtivo !== 2)) {
+            notificar(false);
+            return narrar("⏳ Ainda não é a vez deste Mago usar o veneno!");
+        }
+
+        let campoOposto = document.getElementById(ehAliadoMago ? "campo-j2" : "campo-j1");
+        let classeOposta = ehAliadoMago ? ".carta-inimiga" : ".carta-aliada";
+        if (!campoOposto || campoOposto.querySelectorAll(classeOposta).length === 0) {
+            notificar(false);
+            return narrar("☠️ Não há nenhuma carta no campo oposto para envenenar!");
+        }
+
+        let dado = Math.floor(Math.random() * 6) + 1;
+        dadoTela.style.animation = 'none';
+        setTimeout(() => dadoTela.style.animation = '', 10);
+        dadoTela.innerText = "🎲 " + dado;
+        if (botao) botao.style.display = "none";
+
+        let sucesso = dado === 1 || dado === 4 || dado === 6;
+        if (sucesso) {
+            modoAlvoVenenoMago = true;
+            idMagoVenenoAtivo = idUnico;
+            narrar(`☠️ SUCESSO! O Mago tirou ${dado}. Clique numa carta do campo oposto para envenená-la por 2 rodadas!`);
+        } else {
+            modoAlvoVenenoMago = false;
+            idMagoVenenoAtivo = null;
+            narrar(`🎲 FALHA! O Mago tirou ${dado} e o veneno não foi lançado.`);
+        }
+
+        notificar(sucesso);
+        return; // A habilidade é rápida: depois de escolher o alvo, o Mago ainda pode atacar.
+    }
+
     // --- HABILIDADE: BARRIL DE GOBLINS ---
     if (nome.includes('Barril de Goblin')) { // 🚀 .includes FAZ O CTRL V FUNCIONAR!
         let idAlvo = alvosDoBarril[idUnico];
@@ -734,7 +780,8 @@ if (nome === "Bumerskeleton") {
             alvosAtingidos.forEach(idAlvo => {
                 let txtVida = document.getElementById("vida-" + idAlvo);
                 if (txtVida) {
-                    txtVida.innerText = parseFloat(txtVida.innerText) - 0.25;
+                    // 🩹 CORREÇÃO: nunca deixa a vida mostrar número negativo — trava em 0.
+                    txtVida.innerText = Math.max(0, parseFloat(txtVida.innerText) - 0.25);
                     if (typeof mostrarEfeitoPerdaVida === "function") mostrarEfeitoPerdaVida(idAlvo);
                 }
             });
@@ -751,7 +798,7 @@ if (nome === "Bumerskeleton") {
                     pacote.style.filter = "hue-rotate(180deg) brightness(1.2)"; 
                     
                     if (typeof duracaoGelo !== 'undefined') {
-                        duracaoGelo[idAlvo] = 3; // 3 turnos = 1 rodada completa (mesmo padrão usado no resto do jogo)
+                        duracaoGelo[idAlvo] = 5; // antes 3; +2 passagens = +1 rodada completa
                     }
                 }
             });
@@ -812,12 +859,17 @@ function verificarPassivaNecromante(carta, ehAliado) {
         
         let divMao = document.getElementById(idMaoHTML);
 
-        let suportesReais = [
+        // 🩹 CORREÇÃO: essa lista era uma cópia separada e congelada da lista real de
+        // suportes/poções (suportesReais, em main.js) — nunca foi atualizada com nenhuma
+        // das cartas novas (Vampi7, Portable, Plus Life, Reviverta, Cracker, Allsforms,
+        // Dupliquetion, Auvex), então o Necromante podia invocar qualquer uma delas como
+        // se fosse tropa. Agora usa a lista global de verdade, então nunca mais desatualiza.
+        let listaDeSuportes = (typeof suportesReais !== 'undefined') ? suportesReais : [
             "besta", "recuperida", "velux", "pocaotraicao", 
             "adiv", "pocaogelo", "escudo_item", "cavalotroia", "fogueira"
         ];
 
-        let bancoDeTropas = bancoDeCartas.filter(c => !suportesReais.includes(c.id));
+        let bancoDeTropas = bancoDeCartas.filter(c => !listaDeSuportes.includes(c.id));
 
         for (let i = 0; i < 2; i++) {
             let indexSorteado = Math.floor(Math.random() * bancoDeTropas.length);
@@ -843,12 +895,21 @@ function verificarPassivaNecromante(carta, ehAliado) {
 function usarPassivaLadrao(idUnico, botao) {
     let ehAliado = botao.closest('#campo-j1') || botao.closest('#mao-j1');
 
+    // 🩹 NOVO: a passiva do Ladrão só pode ser usada 1 vez por turno, por lado (zera em
+    // passarTurno). Antes dava pra usar quantas vezes quisesse dentro do mesmo turno.
+    let ladoLadrao = ehAliado ? "j1" : "j2";
+    if (typeof ladraoUsosPorLado !== 'undefined' && ladraoUsosPorLado[ladoLadrao] >= 1) {
+        return narrar("❌ A passiva do Ladrão já foi usada neste turno! Só dá pra usar de novo no próximo.");
+    }
+
     // 🩹 CORREÇÃO: era 'ladroesQueJaRoubaram[idUnico]' — uma trava que nunca era resetada
     // e travava a passiva pro resto do jogo depois do 1º uso. Passiva é "usa quando quiser",
     // então só bloqueamos se já tiver um roubo NESTE EXATO MOMENTO aguardando alvo.
     if (modoLadrao) {
         return narrar("❌ Já tem um roubo do Ladrão em andamento! Escolha o alvo antes de usar de novo.");
     }
+
+    if (typeof ladraoUsosPorLado !== 'undefined') ladraoUsosPorLado[ladoLadrao]++;
 
     let dadoTela = document.getElementById("dado-tela");
     let resultadoDado = Math.floor(Math.random() * 6) + 1;
@@ -878,7 +939,8 @@ function aplicarRouboPrejuizo(idPacoteAlvo) {
     if (tipoRouboLadrao === "vida") {
         let txtVida = document.getElementById("vida-" + idPuro);
         let vidaAtual = parseFloat(txtVida.innerText);
-        txtVida.innerText = vidaAtual - 1;
+        // 🩹 CORREÇÃO: nunca deixa a vida mostrar número negativo — trava em 0.
+        txtVida.innerText = Math.max(0, vidaAtual - 1);
 
         // 🚨 NOVO EFEITO AQUI: Coração partido caindo da carta alvo!
         mostrarEfeitoPerdaVida(idPuro);
@@ -887,13 +949,21 @@ function aplicarRouboPrejuizo(idPacoteAlvo) {
         
         if (vidaAtual - 1 <= 0) {
             let pacote = document.getElementById(idPacoteAlvo);
-            let nomeDestaCarta = pacote.querySelector(".nome-carta").innerText;
+            let nomeExibido = pacote.querySelector(".nome-carta").innerText;
+            let nomeDestaCarta = (typeof obterNomeEfetivoCarta === "function")
+                ? obterNomeEfetivoCarta(idPuro, nomeExibido)
+                : nomeExibido;
             let campoAlvo = pacote.closest("#campo-j2") ? "campo-j2" : "campo-j1";
+            if (typeof registrarMorte === "function") registrarMorte(nomeDestaCarta, campoAlvo === "campo-j2" ? "j2" : "j1");
             pacote.remove();
-            if (nomeDestaCarta === "Ork") {
-                let qtd = orkBuffado[idPuro] ? 3 : 2;
-                narrar(`💀 PASSIVA: O Ork morreu devido ao roubo e invocou ${qtd} Goblins!`);
-                for (let i = 0; i < qtd; i++) invocarToken("goblin", campoAlvo);
+            if (typeof ativarPassivasAoMorrer === "function") {
+                ativarPassivasAoMorrer(
+                    nomeDestaCarta,
+                    idPuro,
+                    campoAlvo,
+                    undefined,
+                    "O Barril morreu devido ao roubo!"
+                );
             }
         }
     } else if (tipoRouboLadrao === "dano") {
@@ -1009,6 +1079,7 @@ function aplicarRouboDanoGoblin(idPacoteAlvo) {
 
 function usarPassivaCtrlC(idUnico, botao) {
     let pacote = document.getElementById("pacote-" + idUnico);
+    if (!pacote) return;
     let ehAliado = pacote.classList.contains("carta-aliada");
     
     let nomeDaCartaAtual = pacote.querySelector(".nome-carta").innerText; 
@@ -1030,34 +1101,66 @@ function usarPassivaCtrlC(idUnico, botao) {
     };
     
     narrar(`📋 Cópia concluída! Seu ${nomeDaCartaAtual} copiou [${cartaAlvo.nome}] com atributos reduzidos em 1.`);
-    // Se copiou um Necromante, puxa as 2 tropas na mesma hora!
+    // Passivas de entrada/ciclo precisam ser ligadas no momento da cópia, pois o Ctrl já
+    // estava no campo quando ganhou a nova identidade.
     if (cartaAlvo.nome === "Necromante") {
         narrar(`✨ PASSIVA COPIADA! O ${nomeDaCartaAtual} forçou a magia do Necromante e invocou 2 tropas da sua mão!`);
         verificarPassivaNecromante({nome: "Necromante", passivaAtivada: false}, ehAliado);
     }
+    if (cartaAlvo.nome === "Cavalo de Tróia") {
+        cavalosDeTroiaAtivos[idUnico] = 4;
+        narrar(`🐴 PASSIVA COPIADA! O ${nomeDaCartaAtual} vai se abrir em 2 rodadas e causar 1 de dano em todas as cartas inimigas.`);
+    }
+    if (cartaAlvo.nome === "Portable") {
+        portableDuracao[idUnico] = 4;
+        narrar(`🛸 PASSIVA COPIADA! Por 2 rodadas, o ${nomeDaCartaAtual} atacará junto das outras cartas do seu time.`);
+    }
+    if (cartaAlvo.nome === "Separado" || cartaAlvo.nome === "Separadois") {
+        let lado = ehAliado ? "j1" : "j2";
+        let classe = ehAliado ? "carta-aliada" : "carta-inimiga";
+        let outrosAliados = Array.from(document.getElementById("campo-" + lado).getElementsByClassName(classe))
+            .filter(p => p.id !== "pacote-" + idUnico);
+        if (outrosAliados.length > 0) {
+            modoParceriaSeparado = true;
+            idSeparadoParceriaAtivo = idUnico;
+            narrar(`👥 PASSIVA COPIADA! Escolha outra carta do mesmo time para formar a parceria do ${nomeDaCartaAtual}.`);
+        }
+    }
     
     let divAcoes = pacote.querySelector("div[id^='acoes-']");
     
-    let botaoAtaque = ehAliado ? 
-        `<button onclick="iniciarAtaque('${cartaAlvo.nome}', '${idUnico}')" style="padding: 5px; width: 100%; margin-bottom: 2px; cursor: pointer;">Atacar ⚔️</button>` :
-        `<button onclick="inimigoAtacar('${idUnico}')" style="padding: 5px; background-color: darkred; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Atacar ⚔️</button>`;
+    let botaoAtaque;
+    if (cartaAlvo.nome === "Incendiário") {
+        botaoAtaque = `<button class="btn-polvora-incendiario" onclick="iniciarAtaqueIncendiario('${idUnico}', ${!ehAliado})" style="padding: 5px; background-color: #b34700; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Jogar Pólvora 🔥</button>`;
+        narrar(`🔥 PASSIVA COPIADA! O ${nomeDaCartaAtual} agora pode jogar pólvora e seguir o ciclo do Incendiário.`);
+    } else {
+        botaoAtaque = ehAliado ?
+            `<button onclick="iniciarAtaque('${cartaAlvo.nome}', '${idUnico}')" style="padding: 5px; width: 100%; margin-bottom: 2px; cursor: pointer;">Atacar ⚔️</button>` :
+            `<button onclick="inimigoAtacar('${idUnico}')" style="padding: 5px; background-color: darkred; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Atacar ⚔️</button>`;
+    }
     
     let btnEspecial = `<button onclick="usarHabilidade('${nomeDaCartaAtual}', '${idUnico}', this)" style="background-color: purple; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Especial 🔮</button>`;
     
-    let botoesExtras = "";
+    let botoesExtras = [];
     if (cartaAlvo.nome === "Curandeiro") {
-        botoesExtras = ehAliado ? 
+        botoesExtras.push(ehAliado ?
             `<button onclick="iniciarCura('${idUnico}')" style="background-color: green; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Curar 💚</button>` : 
-            `<button onclick="iniciarCuraInimigo('${idUnico}')" style="background-color: green; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Curar Oponente 💚</button>`;
+            `<button onclick="iniciarCuraInimigo('${idUnico}')" style="background-color: green; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Curar Oponente 💚</button>`);
     }
     if (cartaAlvo.nome === "Ladrão") {
-        botoesExtras = `<button onclick="usarPassivaLadrao('${idUnico}', this)" style="background-color: gold; font-weight: bold; width: 100%; margin-bottom: 2px; cursor: pointer;">Passiva 💰</button>`;
+        botoesExtras.push(`<button onclick="usarPassivaLadrao('${idUnico}', this)" style="background-color: gold; font-weight: bold; width: 100%; margin-bottom: 2px; cursor: pointer;">Passiva 💰</button>`);
+    }
+    if (cartaAlvo.nome === "Separado" || cartaAlvo.nome === "Separadois") {
+        botoesExtras.push(`<button onclick="trocarParceiroSeparado('${idUnico}', ${ehAliado})" style="background-color: #16a085; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Trocar Parceiro 👥</button>`);
+    }
+    if (cartaAlvo.nome === "Viajante do Tempo") {
+        botoesExtras.push(`<button onclick="usarPassivaViajante('${idUnico}', this)" style="background-color: #8e44ad; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Viajar no Tempo ⏳</button>`);
     }
 
     divAcoes.innerHTML = `
         ${botaoAtaque}
         ${btnEspecial}
-        ${botoesExtras}
+        ${botoesExtras.join("")}
     `;
 
     // 🩹 CORREÇÃO: faltava recalcular o bônus do Unidão na hora — sem isso, um Ctrl C que

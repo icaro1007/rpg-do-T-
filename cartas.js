@@ -46,5 +46,7 @@ const bancoDeCartas = [
             { id: "cracker", nome: "Cracker", vida: 0, dano: 0, img: "cracker.png", qtd: 2 },
             { id: "allsforms", nome: "Allsforms", vida: 0, dano: 0, img: "allsforms.png", qtd: 2 },
             { id: "dupliquetion", nome: "Dupliquetion", vida: 0, dano: 0, img: "dupliquetion.png", qtd: 2 },
-            { id: "auvex", nome: "Auvex", vida: 0, dano: 0, img: "auvex.png", qtd: 2 }
+            { id: "auvex", nome: "Auvex", vida: 0, dano: 0, img: "auvex.png", qtd: 2 },
+            { id: "mago", nome: "Mago", vida: 3, dano: 2, img: "mago.png", qtd: 4 },
+            { id: "triobarbaros", nome: "Trio de Bárbaros", vida: 9, dano: 3, img: "trio de barbaro.png", qtd: 2 }
         ];

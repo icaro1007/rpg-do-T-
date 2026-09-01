@@ -52,7 +52,10 @@
 
     function nomeDaCarta(idUnico) {
         let el = document.querySelector('#pacote-' + cssEscape(idUnico) + ' .nome-carta');
-        return el ? el.innerText.trim() : "";
+        let nomeExibido = el ? el.innerText.trim() : "";
+        return (typeof obterNomeEfetivoCarta === "function")
+            ? obterNomeEfetivoCarta(idUnico, nomeExibido)
+            : nomeExibido;
     }
 
     function vidaDaCarta(idUnico) {
@@ -131,8 +134,42 @@
         }, null);
     }
 
+    // 🩹 NOVO: diz se uma carta em campo pode ser alvo de ataque de verdade — usado pra tirar
+    // da lista de candidatos cartas que o próprio jogo recusa atacar (Cavalo de Tróia sempre,
+    // Vampi7 com menos de 3 de vida), evitando que o bot escolha um alvo, tente atacar e o
+    // ataque seja recusado sem nada acontecer (ficando preso tentando o mesmo alvo à toa).
+    function alvoEhAtacavel(id) {
+        let nome = nomeDaCarta(id);
+        if (nome === "Cavalo de Tróia") return false;
+        if (nome === "Vampi7") {
+            let v = vidaDaCarta(id);
+            return v !== null && v >= 3;
+        }
+        return true;
+    }
+
+    // 🩹 CORREÇÃO: "aliadoMaisFerido" usava a mesma lógica de "menor vida absoluta" do
+    // alvoMaisFragil (pra ataque) — mas pra CURA isso é errado: uma carta como o Vampi7
+    // sempre tem 0 de vida MÁXIMA (não está "ferida", já está no teto dela), então sempre
+    // "ganhava" a comparação e o Curandeiro ficava tentando curar ela pra sempre, sem
+    // sobrar chance pra quem de fato precisava. Agora usa o DÉFICIT (vidaMax - vidaAtual)
+    // e ignora quem não tem vida máxima pra curar ou já está cheia.
     function aliadoMaisFerido(ids) {
-        return alvoMaisFragil(ids); // mesma lógica: quem tem menos vida precisa mais de cura
+        let melhor = null;
+        let melhorDeficit = 0;
+        ids.forEach(id => {
+            let idBase = idBaseDaCarta(id);
+            let info = (typeof bancoDeCartas !== "undefined" && idBase) ? bancoDeCartas.find(c => c.id === idBase) : null;
+            let vidaMax = info ? info.vida : null;
+            let vidaAtual = vidaDaCarta(id);
+            if (vidaMax === null || vidaAtual === null || vidaMax <= 0) return; // sem vida máxima pra curar
+            let deficit = vidaMax - vidaAtual;
+            if (deficit > melhorDeficit) {
+                melhorDeficit = deficit;
+                melhor = id;
+            }
+        });
+        return melhor;
     }
 
     // 💀 Escolhe a melhor carta pra Reviverta trazer de volta, olhando os DOIS cemitérios
@@ -275,6 +312,17 @@
             return true;
         }
 
+        // --- ☠️ Mago aguardando a escolha de quem receberá o veneno ---
+        if (typeof modoAlvoVenenoMago !== "undefined" && modoAlvoVenenoMago === true) {
+            let magoEl = document.getElementById("pacote-" + idMagoVenenoAtivo);
+            if (!magoEl) return false;
+            let ehJ1 = magoEl.closest("#campo-j1") !== null;
+            let candidatos = idsNoContainer(ehJ1 ? "campo-j2" : "campo-j1", ehJ1 ? "carta-inimiga" : "carta-aliada");
+            if (candidatos.length === 0) return false;
+            aplicarAlvoVenenoMago("pacote-" + maiorAmeaca(candidatos));
+            return true;
+        }
+
         // --- Barril de Goblin aguardando alvo ---
         if (typeof modoAlvoBarril !== "undefined" && modoAlvoBarril === true) {
             let barrilEl = document.getElementById("pacote-" + idBarrilAtivo);
@@ -316,7 +364,14 @@
         if (typeof modoCuraInimigo !== "undefined" && modoCuraInimigo === true) {
             let candidatos = idsNoContainer("campo-j2", "carta-inimiga");
             if (candidatos.length === 0) return false;
-            simularCliqueImagem(aliadoMaisFerido(candidatos));
+            let alvo = aliadoMaisFerido(candidatos);
+            if (!alvo) {
+                // 🩹 Segurança: se por algum motivo ninguém tem déficit de vida pra curar,
+                // cancela o modo em vez de deixar "modoCuraInimigo" pendurado pra sempre.
+                modoCuraInimigo = false;
+                return false;
+            }
+            simularCliqueImagem(alvo);
             return true;
         }
 
@@ -430,7 +485,8 @@
 
         // --- Ataque do bot aguardando escolha de alvo (mais de 1 carta no seu campo) ---
         if (typeof modoAtaqueInimigo !== "undefined" && modoAtaqueInimigo === true) {
-            let candidatos = idsNoContainer("campo-j1", "carta-aliada");
+            let candidatos = idsNoContainer("campo-j1", "carta-aliada")
+                .filter(alvoEhAtacavel); // 🩹 tira Cavalo de Tróia e Vampi7 (<3 vida) da lista — não dá pra atacá-los mesmo
             if (candidatos.length === 0) return false;
             // prioriza finalizar quem já está fraco; senão ataca a maior ameaça
             let matavel = candidatos.filter(id => {
@@ -445,7 +501,18 @@
             if (typeof cartasProtegidas !== "undefined" && cartasProtegidas[alvo]) {
                 let idBarrilProtetor = cartasProtegidas[alvo];
                 let barrilAindaExiste = document.getElementById("pacote-" + idBarrilProtetor);
-                alvo = barrilAindaExiste ? idBarrilProtetor : alvo;
+                let pacoteAlvo = document.getElementById("pacote-" + alvo);
+                let campoDoAlvo = pacoteAlvo && pacoteAlvo.closest("#campo-j1, #campo-j2");
+                let campoDoBarril = barrilAindaExiste && barrilAindaExiste.closest("#campo-j1, #campo-j2");
+
+                // Vínculo válido só existe entre cartas do mesmo time. Se algum estado antigo
+                // ou habilidade defeituosa cruzar os lados, desfaz o vínculo em vez de mandar
+                // o bot clicar numa carta do próprio campo para sempre.
+                if (barrilAindaExiste && campoDoAlvo && campoDoBarril && campoDoAlvo === campoDoBarril) {
+                    alvo = idBarrilProtetor;
+                } else {
+                    delete cartasProtegidas[alvo];
+                }
             }
 
             simularCliqueImagem(alvo);
@@ -535,6 +602,36 @@
         // ocupado) — segura na mão por enquanto, tenta de novo em turnos futuros.
         return false;
     }
+
+    // 🃏 CRACKER — reação de emergência fora do turno do bot. Se o jogador roubar
+    // a única carta inimiga em campo, coloca exatamente UMA tropa da mão para que ainda
+    // exista um alvo. Não inicia o ciclo normal da IA e, portanto, não ataca nem usa Especial.
+    function botReporCampoAposCracker() {
+        if (typeof jogoIniciado === "undefined" || jogoIniciado !== true) return false;
+        if (typeof turnoAtivo === "undefined" || turnoAtivo !== 1) return false;
+
+        let campoBot = document.getElementById("campo-j2");
+        if (!campoBot || idsNoContainer("campo-j2", "carta-inimiga").length > 0) return false;
+
+        let candidatos = idsNaMao("mao-j2")
+            .filter(id => !cartaEstaFatigada(id))
+            .filter(id => {
+                let idBase = idBaseDaCarta(id);
+                let info = (typeof bancoDeCartas !== "undefined" && idBase)
+                    ? bancoDeCartas.find(c => c.id === idBase)
+                    : null;
+                return info && !(typeof suportesReais !== "undefined" && suportesReais.includes(info.id));
+            });
+
+        if (candidatos.length === 0) return false;
+
+        let escolhida = maiorAmeaca(candidatos) || candidatos[0];
+        jogarCartaInimigo("pacote-" + escolhida);
+        narrar(`🤖 O Cracker deixou o campo do bot vazio! Ele colocou [${nomeDaCarta(escolhida)}] da mão para você ter um alvo, mas continua sendo a sua vez.`);
+        return true;
+    }
+
+    window.botReporCampoAposCracker = botReporCampoAposCracker;
 
     // -------------------------------------------------------------------
     // FASE 2.5 — INCENDIÁRIO (acende a pólvora assim que houver alvo na arena)
@@ -671,6 +768,9 @@
             if (!btn) continue;
             let nomeParaChamar = nomeHabilidadeDoBotao(btn) || nomeExibido;
 
+            // Sem alvo, o Mago guardará o uso único para depois e o bot seguirá outra ação.
+            if (nomeParaChamar === "Mago" && idsNoContainer("campo-j1", "carta-aliada").length === 0) continue;
+
             // 👹 Trio de Goblin só pode usar a habilidade quando restar 1 goblin (vida ≤ 2).
             if (nomeExibido === "Trio de Goblin") {
                 let vida = vidaDaCarta(id);
@@ -694,6 +794,9 @@
     function botAtacar() {
         let tropasProntas = idsNoContainer("campo-j2", "carta-inimiga")
             .filter(id => !estaCongelada(id))
+            // O Incendiário (inclusive um Ctrl que o copiou) combate pelo ciclo da pólvora,
+            // não pelo ataque comum.
+            .filter(id => nomeDaCarta(id) !== "Incendiário")
             // 👥 Separado/Separadois com parceira viva não ataca pelo próprio botão — só
             // quando a parceira ataca. Tirando eles daqui, o bot nunca tenta usá-los como
             // atacante principal (senão o clique é recusado e o bot trava sem passar a vez).
