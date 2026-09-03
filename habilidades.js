@@ -4,14 +4,126 @@ let idCurandeiroAtivo = "";
 let buffCuraCurandeiro = 0;       
 let modoAtaqueCurandeiro = false;  
 let modoCuraInimigo = false;
+let idCurandeiroAtivoInimigo = "";
 let buffCuraCurandeiroInimigo = 0;
 let modoAtaqueCurandeiroInimigo = false;
 let modoLadrao = false;
 let faseLadrao = 0; 
 let tipoRouboLadrao = ""; 
 let ladroesQueJaRoubaram = {}; 
+let idLadraoRouboAtivo = null;
 let cavaleiroAtivado = {}; // Guarda quais Cavaleiros conseguiram o bônus permanente
 window.mensageirosEmArea = window.mensageirosEmArea || {};
+
+function animarTransferenciaLadrao(idOrigem, idDestino, tipo, etapa) {
+    let origem = document.getElementById("pacote-" + idOrigem);
+    let destino = document.getElementById("pacote-" + idDestino);
+    if (!origem || !destino) return;
+
+    let retanguloOrigem = origem.getBoundingClientRect();
+    let retanguloDestino = destino.getBoundingClientRect();
+    let inicioX = retanguloOrigem.left + retanguloOrigem.width / 2;
+    let inicioY = retanguloOrigem.top + retanguloOrigem.height * 0.42;
+    let fimX = retanguloDestino.left + retanguloDestino.width / 2;
+    let fimY = retanguloDestino.top + retanguloDestino.height * 0.42;
+    let distanciaX = fimX - inicioX;
+    let distanciaY = fimY - inicioY;
+    let mesmaCarta = origem === destino;
+
+    let item = document.createElement("span");
+    item.className = "item-transferido-ladrao ladrao-item-" + tipo + " ladrao-etapa-" + etapa;
+    item.textContent = tipo === "vida" ? "♥" : "⚔";
+    item.dataset.valor = etapa === "roubo" ? "-1" : "+1";
+    item.setAttribute("aria-hidden", "true");
+    item.style.left = inicioX + "px";
+    item.style.top = inicioY + "px";
+    item.style.setProperty("--ladrao-x", distanciaX + "px");
+    item.style.setProperty("--ladrao-y", distanciaY + "px");
+    item.style.setProperty("--ladrao-meio-x", (mesmaCarta ? 42 : distanciaX / 2) + "px");
+    item.style.setProperty("--ladrao-meio-y", (mesmaCarta ? -72 : distanciaY / 2 - 54) + "px");
+    document.body.appendChild(item);
+
+    let classeOrigem = etapa === "roubo" ? "alvo-sendo-roubado" : "ladrao-entregando-roubo";
+    origem.classList.remove(classeOrigem);
+    void origem.offsetWidth;
+    origem.classList.add(classeOrigem);
+
+    setTimeout(() => {
+        if (!destino.isConnected) return;
+        destino.classList.remove("recebendo-item-ladrao", "recebendo-vida-ladrao", "recebendo-dano-ladrao");
+        void destino.offsetWidth;
+        destino.classList.add("recebendo-item-ladrao", "recebendo-" + tipo + "-ladrao");
+    }, 570);
+
+    setTimeout(() => {
+        item.remove();
+        if (origem.isConnected) origem.classList.remove(classeOrigem);
+        if (destino.isConnected) {
+            destino.classList.remove("recebendo-item-ladrao", "recebendo-vida-ladrao", "recebendo-dano-ladrao");
+        }
+    }, 1050);
+}
+
+function animarFrascoCurandeiro(idOrigem, idDestino, tipo) {
+    let origem = document.getElementById("pacote-" + idOrigem);
+    let destino = document.getElementById("pacote-" + idDestino);
+    if (!origem || !destino) return;
+
+    let retanguloOrigem = origem.getBoundingClientRect();
+    let retanguloDestino = destino.getBoundingClientRect();
+    let inicioX = retanguloOrigem.left + retanguloOrigem.width / 2;
+    let inicioY = retanguloOrigem.top + retanguloOrigem.height / 2;
+    let distanciaX = (retanguloDestino.left + retanguloDestino.width / 2) - inicioX;
+    let distanciaY = (retanguloDestino.top + retanguloDestino.height / 2) - inicioY;
+    let sobreSiMesmo = idOrigem === idDestino;
+
+    let frasco = document.createElement("span");
+    frasco.className = "frasco-curandeiro-lancado " + (tipo === "ataque" ? "frasco-buff-ataque" : "frasco-cura");
+    frasco.textContent = "🧪";
+    frasco.dataset.simbolo = tipo === "ataque" ? "+1" : "+";
+    frasco.setAttribute("aria-hidden", "true");
+    frasco.style.left = inicioX + "px";
+    frasco.style.top = inicioY + "px";
+    frasco.style.setProperty("--cura-x", distanciaX + "px");
+    frasco.style.setProperty("--cura-y", distanciaY + "px");
+    frasco.style.setProperty("--cura-meio-x", (sobreSiMesmo ? 32 : distanciaX / 2) + "px");
+    frasco.style.setProperty("--cura-meio-y", (sobreSiMesmo ? -62 : distanciaY / 2 - 48) + "px");
+    document.body.appendChild(frasco);
+
+    frasco.addEventListener("animationend", () => frasco.remove(), { once: true });
+    setTimeout(() => {
+        if (frasco.parentNode) frasco.remove();
+    }, 1350);
+}
+
+function animarInvocacaoNecromante(idCarta, atraso) {
+    setTimeout(() => {
+        let cartaInvocada = document.getElementById("pacote-" + idCarta);
+        if (!cartaInvocada) return;
+
+        let retangulo = cartaInvocada.getBoundingClientRect();
+        let terra = document.createElement("span");
+        terra.className = "terra-invocacao-necromante";
+        terra.setAttribute("aria-hidden", "true");
+        terra.style.left = (retangulo.left + retangulo.width / 2) + "px";
+        terra.style.top = (retangulo.bottom - 9) + "px";
+        terra.style.width = Math.max(86, retangulo.width * 0.82) + "px";
+        document.body.appendChild(terra);
+
+        cartaInvocada.classList.remove("invocada-pelo-necromante");
+        void cartaInvocada.offsetWidth;
+        cartaInvocada.classList.add("invocada-pelo-necromante");
+
+        cartaInvocada.addEventListener("animationend", () => {
+            cartaInvocada.classList.remove("invocada-pelo-necromante");
+        }, { once: true });
+
+        setTimeout(() => {
+            cartaInvocada.classList.remove("invocada-pelo-necromante");
+            if (terra.parentNode) terra.remove();
+        }, 1250);
+    }, atraso || 0);
+}
 
 function iniciarCura(idUnicoCurandeiro) {
     modoCura = true;
@@ -34,6 +146,7 @@ function aplicarCuraAliada(idDoPacote) {
     
     let novaVida = Math.min(maxVida, vidaAtual + valorCura);
     txtVida.innerText = novaVida;
+    animarFrascoCurandeiro(idCurandeiroAtivo, idPuro, "cura");
 
     // 🚨 EFEITO DE VIDA AQUI: Como foi uma cura, usamos "recuperou" (sobe 3 corações)
     mostrarEfeitoVida(idPuro, "recuperou");
@@ -62,6 +175,7 @@ function aplicarCuraAliada(idDoPacote) {
 
 function iniciarCuraInimigo(idUnicoCurandeiro) {
     modoCuraInimigo = true;
+    idCurandeiroAtivoInimigo = idUnicoCurandeiro;
     narrar("💚 Modo Cura Ativado! O Oponente deve clicar numa carta dele para curar.");
 }
 
@@ -80,6 +194,7 @@ function aplicarCuraInimiga(idDoPacote) {
     
     let novaVida = Math.min(maxVida, vidaAtual + valorCura);
     txtVida.innerText = novaVida;
+    animarFrascoCurandeiro(idCurandeiroAtivoInimigo, idPuro, "cura");
 
     // 🚨 EFEITO DE VIDA AQUI: Como foi uma cura, usamos "recuperou" (sobe 3 corações)
     mostrarEfeitoVida(idPuro, "recuperou");
@@ -100,6 +215,7 @@ function aplicarCuraInimiga(idDoPacote) {
     narrar(`💚 ${nomeCarta} do Oponente foi curado em +${valorCura} de vida${msgBuff}. O turno dele acabou.`);
     
     modoCuraInimigo = false;
+    idCurandeiroAtivoInimigo = "";
     passarTurno();
 
     atualizarTodosUnidoes();
@@ -302,6 +418,7 @@ function usarHabilidade(nome, idUnico, botao, aoConcluir) {
                 if (pacoteBruxo) {
                     let oBruxoEAliado = pacoteBruxo.closest("#campo-j1") !== null;
                     let maoDestino = oBruxoEAliado ? "mao-j1" : "mao-j2";
+                    if (typeof animarBruxoVirandoPocao === "function") animarBruxoVirandoPocao(idUnico);
                     gerarPocaoAleatoria(maoDestino); // Cria a poção
                     pacoteBruxo.remove(); // Remove o Bruxo do campo
                 }
@@ -478,6 +595,7 @@ function usarHabilidade(nome, idUnico, botao, aoConcluir) {
             let spanDano = document.getElementById("dano-" + idUnico);
             let danoAtual = parseFloat(spanDano.innerText);
             spanDano.innerText = danoAtual + 1;
+            animarFrascoCurandeiro(idUnico, idUnico, "ataque");
             msgDano = ehAliado ? "💥 Dado ÍMPAR! Seu Curandeiro ganhou +1 de Ataque." : "💥 Dado ÍMPAR! O Curandeiro Inimigo ganhou +1 de Ataque.";
         } else {
             msgDano = "❌ Dado foi PAR (sem ganho de ataque, sem bônus de cura).";
@@ -614,6 +732,7 @@ function usarHabilidade(nome, idUnico, botao, aoConcluir) {
         
         if (dado >= 1 && dado <= 4) {
             escudoGuerreiro[idUnico] = true;
+            ativarVisualEscudo(idUnico);
             narrar(`🛡️ SUCESSO! O Guerreiro rolou ${dado} e ergueu o seu escudo impenetrável para esta rodada!`);
         } else {
             narrar(`🎲 FALHA... O Guerreiro rolou ${dado} e o escudo encravou.`);
@@ -751,15 +870,13 @@ if (nome === "Bumerskeleton") {
 
         if (dado === 1) {
             // EFEITO 1: BUMERANGUE VOLTA
+            if (typeof animarRetornoBumerangue === "function") animarRetornoBumerangue(idUnico);
             let primeiroAlvo = alvosAtingidos[0]; 
             let pacoteAlvo = document.getElementById("pacote-" + primeiroAlvo);
             
             if (pacoteAlvo) {
                 // Descobre qual é o próximo dano da escala 
                 let danoDoRetorno = tabelaDanoBumerangue[alvosAtingidos.length] || 4; 
-                if (typeof animarBumerangueEntre === "function") {
-                    animarBumerangueEntre(primeiroAlvo, idUnico, true);
-                }
                 
                 let txtVida = document.getElementById("vida-" + primeiroAlvo);
                 let vidaAtual = parseFloat(txtVida.innerText);
@@ -783,13 +900,14 @@ if (nome === "Bumerskeleton") {
             alvosAtingidos.forEach(idAlvo => {
                 let txtVida = document.getElementById("vida-" + idAlvo);
                 if (txtVida) {
-                    if (typeof ativarFogoCarta === "function") ativarFogoCarta(idAlvo, 1500, false);
+                    if (typeof ativarFogoVisualBumerskeleton === "function") ativarFogoVisualBumerskeleton(idAlvo);
                     // 🩹 CORREÇÃO: nunca deixa a vida mostrar número negativo — trava em 0.
                     txtVida.innerText = Math.max(0, parseFloat(txtVida.innerText) - 0.25);
                     if (typeof mostrarEfeitoPerdaVida === "function") mostrarEfeitoPerdaVida(idAlvo);
                 }
             });
             narrar(`🔥 FOGO! O rastro do bumerangue incendiou TODAS as cartas atingidas (-0.25 de vida)!`);
+            if (typeof trajetosVisuaisBumerangue !== "undefined") delete trajetosVisuaisBumerangue[idUnico];
             notificar(true);
             passarTurno(); // 🩹 CORREÇÃO: faltava passar o turno — dava pra atacar de novo de graça.
 
@@ -804,15 +922,18 @@ if (nome === "Bumerskeleton") {
                     if (typeof duracaoGelo !== 'undefined') {
                         duracaoGelo[idAlvo] = 5; // antes 3; +2 passagens = +1 rodada completa
                     }
+                    if (typeof ativarGeloVisualBumerskeleton === "function") ativarGeloVisualBumerskeleton(idAlvo);
                 }
             });
             narrar(`❄️ GELO ABSOLUTO! Todas as cartas no trajeto do bumerangue foram CONGELADAS!`);
+            if (typeof trajetosVisuaisBumerangue !== "undefined") delete trajetosVisuaisBumerangue[idUnico];
             notificar(true);
             passarTurno(); // 🩹 CORREÇÃO: faltava passar o turno — dava pra atacar de novo de graça.
             
         } else {
             // 🚨 MENSAGEM DE FALHA: Se não cair 1, 3 ou 5
             narrar(`💀 Falhou! O dado tirou ${dado} (não foi 1, 3 ou 5). O bumerangue caiu e a chance foi perdida!`);
+            if (typeof trajetosVisuaisBumerangue !== "undefined") delete trajetosVisuaisBumerangue[idUnico];
             notificar(false);
             passarTurno(); // 🩹 CORREÇÃO: faltava passar o turno — dava pra atacar de novo de graça.
         }
@@ -891,6 +1012,8 @@ function verificarPassivaNecromante(carta, ehAliado) {
             let htmlDaCarta = criarHTMLCarta(novaCarta, funcaoJogar, classeCss, ehAliado);
             if (divMao) {
                 divMao.insertAdjacentHTML('beforeend', htmlDaCarta);
+                // As duas cartas surgem em sequência, como se fossem desenterradas.
+                animarInvocacaoNecromante(novaCarta.idUnico, i * 170);
             }
         }
     }
@@ -926,19 +1049,26 @@ function usarPassivaLadrao(idUnico, botao) {
         modoLadrao = true;
         faseLadrao = 1;
         tipoRouboLadrao = "vida";
+        idLadraoRouboAtivo = idUnico;
         narrar(`💰 Ladrão tirou ${resultadoDado}! Clique em uma carta INIMIGA do campo para roubar 1 de VIDA.`);
     } else if (resultadoDado === 4 || resultadoDado === 6) {
         modoLadrao = true;
         faseLadrao = 1;
         tipoRouboLadrao = "dano";
+        idLadraoRouboAtivo = idUnico;
         narrar(`💰 Ladrão tirou ${resultadoDado}! Clique em uma carta INIMIGA do campo para roubar 1 de DANO.`);
     } else {
+        idLadraoRouboAtivo = null;
         narrar(`❌ O Ladrão rolou ${resultadoDado}. O plano de roubo falhou e a chance foi gasta!`);
     }
 }
 
 function aplicarRouboPrejuizo(idPacoteAlvo) {
     let idPuro = idPacoteAlvo.replace("pacote-", "");
+
+    // O objeto roubado sai visualmente da vítima e vai até o Ladrão.
+    // A animação é criada antes do dano para continuar visível mesmo se a vítima morrer.
+    animarTransferenciaLadrao(idPuro, idLadraoRouboAtivo, tipoRouboLadrao, "roubo");
     
     if (tipoRouboLadrao === "vida") {
         let txtVida = document.getElementById("vida-" + idPuro);
@@ -989,6 +1119,9 @@ function aplicarRouboPrejuizo(idPacoteAlvo) {
 function aplicarRouboBeneficio(idPacoteAliado) {
     let idPuro = idPacoteAliado.replace("pacote-", "");
     let nomeCarta = document.getElementById(idPacoteAliado).querySelector(".nome-carta").innerText;
+
+    // Na segunda etapa, o Ladrão entrega o coração ou a espada ao aliado escolhido.
+    animarTransferenciaLadrao(idLadraoRouboAtivo, idPuro, tipoRouboLadrao, "entrega");
     
     if (tipoRouboLadrao === "vida") {
         let txtVida = document.getElementById("vida-" + idPuro);
@@ -996,7 +1129,9 @@ function aplicarRouboBeneficio(idPacoteAliado) {
         txtVida.innerText = vidaAtual + 1;
 
 // 🚨 EFEITO DE VIDA AQUI: Sobe 1 coração só, pois ganhou pouca vida
-        mostrarEfeitoVida(idPuro, "ganhou");
+        setTimeout(() => {
+            if (document.getElementById("pacote-" + idPuro)) mostrarEfeitoVida(idPuro, "ganhou");
+        }, 590);
 
         narrar(`💰 Sucesso total! +1 de VIDA transferido para ${nomeCarta}. Agora você pode Atacar ou Curar!`);
     } else if (tipoRouboLadrao === "dano") {
@@ -1005,7 +1140,9 @@ function aplicarRouboBeneficio(idPacoteAliado) {
         txtDano.innerText = danoAtual + 1;
 
         // 🚨 EFEITO AQUI: Sobe a espadinha!
-    mostrarEfeitoAtaque(idPuro);
+        setTimeout(() => {
+            if (document.getElementById("pacote-" + idPuro)) mostrarEfeitoAtaque(idPuro);
+        }, 590);
 
         narrar(`💰 Sucesso total! +1 de DANO transferido para ${nomeCarta}. Agora você pode Atacar ou Curar!`);
     }
@@ -1013,6 +1150,7 @@ function aplicarRouboBeneficio(idPacoteAliado) {
     modoLadrao = false;
     faseLadrao = 0;
     tipoRouboLadrao = "";
+    idLadraoRouboAtivo = null;
 
     atualizarTodosUnidoes();
 }
@@ -1103,6 +1241,10 @@ function usarPassivaCtrlC(idUnico, botao) {
         nomeOriginal: cartaAlvo.nome,
         ehAliado: ehAliado
     };
+
+    if (typeof animarMetamorfoseCtrl === "function") {
+        animarMetamorfoseCtrl(idUnico, cartaAlvo.nome, ehAliado);
+    }
     
     narrar(`📋 Cópia concluída! Seu ${nomeDaCartaAtual} copiou [${cartaAlvo.nome}] com atributos reduzidos em 1.`);
     // Passivas de entrada/ciclo precisam ser ligadas no momento da cópia, pois o Ctrl já

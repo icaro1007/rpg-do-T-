@@ -32,10 +32,13 @@ let modoAlvoBarrilInimigo = false;
 let idBarrilAtivo = null;
 let alvosDoBarril = {}; // Guarda { idDoBarril: idDoAlvo }
 let barrilJaImpactou = {}; // Guarda { idDoBarril: true } se já deu o dano de impacto
+let lancamentosBarrilGoblinEmCurso = {}; // segura os marcadores até o barril terminar de cair
+let pulsosBarrilGoblinPendentes = {}; // lembra o primeiro ataque caso ele aconteça durante o voo
 let modoEspecialBarrilGoblin = false; // 📦 Especial do Barril de Goblin acionado ANTES de atacar (escolhe alvo e já ataca+rola)
 let modoAlvoBarrilBarbaro = false;
 let modoAlvoBarrilBarbaroInimigo = false;
 let splashBarbaroAtivo = {}; // objeto por ID (idUnico do Barril) — evita vazar o splash entre 2 Barris de Bárbaro em campo ao mesmo tempo
+let barrilBarbaroEmAnimacao = false; // impede outra ação enquanto o Barril ainda está rolando até o alvo
 let modoAlvoCavaleiro = false;        // Aguardando o jogador clicar no alvo principal do Cavaleiro das Trevas
 let modoAlvoCavaleiroInimigo = false; // Idem, do lado do oponente/bot
 let idCavaleiroAtivo = null;          // Guarda o idUnico do Cavaleiro que está atacando
@@ -51,6 +54,9 @@ let idPocaoAtiva = null;
 let duracaoGelo = {}; // Guarda quem está congelado e por quantas passagens de turno
 let passagemAutomaticaGeloPendente = null; // evita um passe atrasado trocar dois turnos de uma vez
 let alvosDoBumerangue = {}; // Guarda a lista de quem o bumerangue bateu: { idBume: ['alvo1', 'alvo2'] }
+let trajetosVisuaisBumerangue = {}; // pontos percorridos na ida, reutilizados quando o especial manda o bumerangue voltar
+let geloBumerskeletonAtivos = {}; // mantém os fragmentos ligados somente ao gelo causado pelo Bumerskeleton
+let timersFogoBumerskeleton = {}; // permite renovar o fogo visual sem um temporizador antigo apagá-lo cedo
 let modoEspecialBumerskeleton = false; // 🪃 Especial do Bumerskeleton acionado ANTES de atacar
 let idBumerskeletonEspecialAtivo = null;
 let tabelaDanoBumerangue = [1, 2, 4, 4, 4, 4, 4, 4, 4, 4]; // Escala pela ORDEM do golpe na cadeia: 1º alvo leva 1, 2º leva 2, do 3º em diante 4 cada (teto pra não ficar forte demais)
@@ -58,6 +64,7 @@ let cartasCongeladas = {}; // Registra quais cartas estão sob o efeito de gelo 
 let cavalosDeTroiaAtivos = {}; // idUnico -> passagens de turno restantes até explodir (2 rodadas = 4 passagens, 1 rodada = vez de cada jogador)
 let incendiarioCiclo = {}; // idUnico -> fase atual (1=joga pólvora, 2 e 3=queima 1 dano cada, 4=parado, depois volta pra 1)
 let incendiarioAlvos = {}; // idUnico -> lista de IDs das cartas inimigas que receberam a pólvora nesse ciclo
+let incendiarioFasesVisuais = {}; // acompanha a fase já aplicada para manter pólvora/fogo visíveis mesmo entre turnos
 let modoTransformacaoIcaro = false; // aguardando clique na carta que vai virar outra
 let idIcaroAtivo = null;
 let modoAjusteThiago = false; // aguardando clique na carta que vai ter um atributo ajustado em ±1
@@ -78,15 +85,857 @@ let buffsAllsforms = {}; // idUnico -> array de { bonus, restam } — restam em 
 let dupliquetionPendente = null; // { idItem, ehAliado } enquanto a tela de escolha da Dupliquetion está aberta
 let modoAlvoVenenoMago = false; // aguardando o Mago escolher uma carta do lado oposto
 let idMagoVenenoAtivo = null;
-let venenosMago = {}; // idMago -> { idAlvo, restam }; 2 rodadas = 4 passagens de turno
-let sistemaVfxCombateInstalado = false;
-let posicoesVfxCartas = new Map();
+let venenosMago = {}; // idEfeito -> { idMago, idAlvo, restam }; um mesmo Mago pode manter vários alvos
+let proximoIdVenenoMago = 1;
 
 // 🚨 NOVIDADE: A lista de suportes/poções agora fica no topo do código!
 let suportesReais = [
     "besta", "recuperida", "velux", "pocaotraicao", 
     "adiv", "pocaogelo", "escudo_item", "cavalotroia", "fogueira", "vampi7", "portable", "plus_life", "reviverta", "cracker", "allsforms", "dupliquetion", "auvex",
 ];
+
+function ativarEfeitoVelocidade(idUnico) {
+    let carta = document.getElementById("pacote-" + idUnico);
+    if (!carta) return;
+
+    carta.classList.add("com-velocidade-extra");
+
+    let efeito = carta.querySelector(":scope > .efeito-velocidade-extra");
+    if (!efeito) {
+        efeito = document.createElement("span");
+        efeito.className = "efeito-velocidade-extra";
+        efeito.setAttribute("aria-hidden", "true");
+
+        for (let i = 0; i < 6; i++) {
+            let rastro = document.createElement("i");
+            rastro.className = "rastro-velocidade rastro-velocidade-" + (i + 1);
+            efeito.appendChild(rastro);
+        }
+
+        carta.appendChild(efeito);
+    }
+
+    // Reinicia o clarão sempre que a carta recebe uma nova carga de velocidade.
+    efeito.classList.remove("velocidade-acabou-de-ativar");
+    void efeito.offsetWidth;
+    efeito.classList.add("velocidade-acabou-de-ativar");
+}
+
+function removerEfeitoVelocidade(idUnico) {
+    let carta = document.getElementById("pacote-" + idUnico);
+    if (!carta) return;
+
+    carta.classList.remove("com-velocidade-extra");
+    let efeito = carta.querySelector(":scope > .efeito-velocidade-extra");
+    if (efeito) efeito.remove();
+}
+
+let origensTransformacaoOrk = {};
+
+function guardarOrigemTransformacaoOrk(nomeCarta, idUnico, pacoteCarta) {
+    if (nomeCarta !== "Ork" || !pacoteCarta) return;
+
+    let retangulo = pacoteCarta.getBoundingClientRect();
+    let imagem = pacoteCarta.querySelector("img");
+    origensTransformacaoOrk[idUnico] = {
+        left: retangulo.left,
+        top: retangulo.top,
+        width: retangulo.width,
+        height: retangulo.height,
+        imagem: imagem ? imagem.src : "ork.png"
+    };
+}
+
+function animarTransformacaoOrk(idUnico, goblinsInvocados) {
+    let origem = origensTransformacaoOrk[idUnico];
+    delete origensTransformacaoOrk[idUnico];
+    if (!origem) return;
+
+    let centroX = origem.left + origem.width / 2;
+    let centroY = origem.top + origem.height / 2;
+    let fantasma = document.createElement("span");
+    fantasma.className = "transformacao-ork-origem";
+    fantasma.setAttribute("aria-hidden", "true");
+    fantasma.style.left = origem.left + "px";
+    fantasma.style.top = origem.top + "px";
+    fantasma.style.width = origem.width + "px";
+    fantasma.style.height = origem.height + "px";
+
+    let imagemOrk = document.createElement("img");
+    imagemOrk.className = "imagem-ork-transformando";
+    imagemOrk.src = origem.imagem;
+    imagemOrk.alt = "";
+    fantasma.appendChild(imagemOrk);
+
+    for (let i = 0; i < 8; i++) {
+        let particula = document.createElement("i");
+        particula.className = "particula-transformacao-ork";
+        particula.style.setProperty("--ork-particula-x", ((i % 4) * 24 - 36) + "px");
+        particula.style.setProperty("--ork-particula-y", (i < 4 ? -42 - i * 5 : 34 + (i - 4) * 5) + "px");
+        particula.style.animationDelay = (i * 0.035) + "s";
+        fantasma.appendChild(particula);
+    }
+
+    document.body.appendChild(fantasma);
+
+    goblinsInvocados.forEach((goblin, indice) => {
+        if (!goblin) return;
+        let destino = goblin.getBoundingClientRect();
+        let destinoX = destino.left + destino.width / 2;
+        let destinoY = destino.top + destino.height / 2;
+        goblin.style.setProperty("--ork-origem-x", (centroX - destinoX) + "px");
+        goblin.style.setProperty("--ork-origem-y", (centroY - destinoY) + "px");
+        goblin.style.setProperty("--ork-atraso", (0.12 + indice * 0.1) + "s");
+        goblin.classList.add("goblin-nascido-do-ork");
+
+        setTimeout(() => {
+            goblin.classList.remove("goblin-nascido-do-ork");
+            goblin.style.removeProperty("--ork-origem-x");
+            goblin.style.removeProperty("--ork-origem-y");
+            goblin.style.removeProperty("--ork-atraso");
+        }, 1450);
+    });
+
+    setTimeout(() => {
+        if (fantasma.parentNode) fantasma.remove();
+    }, 1150);
+}
+
+function criarFantasmaAlvoBruxo(pacoteAlvo, tipo) {
+    if (!pacoteAlvo) return null;
+
+    let retangulo = pacoteAlvo.getBoundingClientRect();
+    let fantasma = pacoteAlvo.cloneNode(true);
+    fantasma.removeAttribute("id");
+    fantasma.querySelectorAll("[id]").forEach(elemento => elemento.removeAttribute("id"));
+    fantasma.querySelectorAll("button").forEach(botao => botao.remove());
+    fantasma.querySelectorAll("[onclick]").forEach(elemento => elemento.removeAttribute("onclick"));
+    fantasma.classList.add("fantasma-alvo-bruxo", tipo === "roubar" ? "alvo-roubado-bruxo" : "alvo-transmutado-bruxo");
+    fantasma.style.left = retangulo.left + "px";
+    fantasma.style.top = retangulo.top + "px";
+    fantasma.style.width = retangulo.width + "px";
+    fantasma.style.height = retangulo.height + "px";
+    document.body.appendChild(fantasma);
+
+    setTimeout(() => {
+        if (fantasma.parentNode) fantasma.remove();
+    }, 1250);
+
+    return {
+        left: retangulo.left,
+        top: retangulo.top,
+        width: retangulo.width,
+        height: retangulo.height
+    };
+}
+
+function animarPocaoBruxo(idBruxo, idAlvo, tipo) {
+    let bruxo = document.getElementById("pacote-" + idBruxo);
+    let alvo = document.getElementById("pacote-" + idAlvo);
+    if (!bruxo || !alvo) return null;
+
+    let retanguloBruxo = bruxo.getBoundingClientRect();
+    let retanguloAlvo = alvo.getBoundingClientRect();
+    let inicioX = retanguloBruxo.left + retanguloBruxo.width / 2;
+    let inicioY = retanguloBruxo.top + retanguloBruxo.height / 2;
+    let distanciaX = (retanguloAlvo.left + retanguloAlvo.width / 2) - inicioX;
+    let distanciaY = (retanguloAlvo.top + retanguloAlvo.height / 2) - inicioY;
+    let origemAlvo = criarFantasmaAlvoBruxo(alvo, tipo);
+
+    let frasco = document.createElement("span");
+    frasco.className = "pocao-lancada-bruxo " + (tipo === "roubar" ? "pocao-dominacao-bruxo" : "pocao-polimorfia-bruxo");
+    frasco.textContent = "🧪";
+    frasco.dataset.simbolo = tipo === "roubar" ? "✦" : "↻";
+    frasco.setAttribute("aria-hidden", "true");
+    frasco.style.left = inicioX + "px";
+    frasco.style.top = inicioY + "px";
+    frasco.style.setProperty("--bruxo-pocao-x", distanciaX + "px");
+    frasco.style.setProperty("--bruxo-pocao-y", distanciaY + "px");
+    frasco.style.setProperty("--bruxo-pocao-meio-x", (distanciaX / 2) + "px");
+    frasco.style.setProperty("--bruxo-pocao-meio-y", (distanciaY / 2 - 48) + "px");
+    document.body.appendChild(frasco);
+
+    setTimeout(() => {
+        if (frasco.parentNode) frasco.remove();
+    }, 1150);
+
+    return origemAlvo;
+}
+
+function animarBruxoVirandoPocao(idBruxo) {
+    let bruxo = document.getElementById("pacote-" + idBruxo);
+    if (!bruxo) return;
+
+    let retangulo = bruxo.getBoundingClientRect();
+    let imagemOriginal = bruxo.querySelector("img");
+    let efeito = document.createElement("span");
+    efeito.className = "bruxo-virando-pocao";
+    efeito.setAttribute("aria-hidden", "true");
+    efeito.style.left = retangulo.left + "px";
+    efeito.style.top = retangulo.top + "px";
+    efeito.style.width = retangulo.width + "px";
+    efeito.style.height = retangulo.height + "px";
+
+    let imagem = document.createElement("img");
+    imagem.className = "imagem-bruxo-encolhendo";
+    imagem.src = imagemOriginal ? imagemOriginal.src : "bruxo.png";
+    imagem.alt = "";
+    efeito.appendChild(imagem);
+
+    let pocao = document.createElement("b");
+    pocao.className = "pocao-nascendo-do-bruxo";
+    pocao.textContent = "🧪";
+    efeito.appendChild(pocao);
+
+    for (let i = 0; i < 6; i++) {
+        let faisca = document.createElement("i");
+        faisca.className = "faisca-transformacao-bruxo";
+        faisca.style.setProperty("--bruxo-faisca-x", ((i % 3) * 34 - 34) + "px");
+        faisca.style.setProperty("--bruxo-faisca-y", (i < 3 ? -42 - i * 6 : 35 + (i - 3) * 7) + "px");
+        efeito.appendChild(faisca);
+    }
+
+    document.body.appendChild(efeito);
+    setTimeout(() => {
+        if (efeito.parentNode) efeito.remove();
+    }, 1250);
+}
+
+function animarCartaRoubadaBruxo(cartaRoubada, origem) {
+    if (!cartaRoubada || !origem) return;
+
+    let destino = cartaRoubada.getBoundingClientRect();
+    let origemX = origem.left + origem.width / 2;
+    let origemY = origem.top + origem.height / 2;
+    let destinoX = destino.left + destino.width / 2;
+    let destinoY = destino.top + destino.height / 2;
+    cartaRoubada.style.setProperty("--bruxo-roubo-x", (origemX - destinoX) + "px");
+    cartaRoubada.style.setProperty("--bruxo-roubo-y", (origemY - destinoY) + "px");
+    cartaRoubada.classList.add("carta-roubada-pelo-bruxo");
+
+    setTimeout(() => {
+        cartaRoubada.classList.remove("carta-roubada-pelo-bruxo");
+        cartaRoubada.style.removeProperty("--bruxo-roubo-x");
+        cartaRoubada.style.removeProperty("--bruxo-roubo-y");
+    }, 1450);
+}
+
+function criarResiduoPolvoraIncendiario(pacote) {
+    if (!pacote || pacote.querySelector(".residuo-polvora-incendiario")) return;
+
+    let residuo = document.createElement("span");
+    residuo.className = "residuo-polvora-incendiario";
+    residuo.setAttribute("aria-hidden", "true");
+    for (let i = 0; i < 8; i++) {
+        let grao = document.createElement("i");
+        grao.style.setProperty("--grao-x", (10 + ((i * 31) % 82)) + "%");
+        grao.style.setProperty("--grao-y", (13 + ((i * 47) % 72)) + "%");
+        grao.style.setProperty("--grao-tamanho", (2 + (i % 3)) + "px");
+        residuo.appendChild(grao);
+    }
+    pacote.appendChild(residuo);
+}
+
+function criarChamasIncendiario(pacote) {
+    if (!pacote || pacote.querySelector(".chamas-carta-incendiario")) return;
+
+    let chamas = document.createElement("span");
+    chamas.className = "chamas-carta-incendiario";
+    chamas.setAttribute("aria-hidden", "true");
+    for (let i = 0; i < 4; i++) {
+        let chama = document.createElement("b");
+        chama.textContent = "🔥";
+        chama.style.setProperty("--chama-x", (9 + i * 27) + "%");
+        chama.style.setProperty("--chama-atraso", (i * -0.16) + "s");
+        chamas.appendChild(chama);
+    }
+    pacote.appendChild(chamas);
+}
+
+function definirVisualIncendiario(pacote, estado) {
+    if (!pacote) return;
+
+    if (estado === "fogo") {
+        if (pacote.classList.contains("com-polvora-incendiario")) pacote.classList.remove("com-polvora-incendiario");
+        if (!pacote.classList.contains("em-chamas-incendiario")) pacote.classList.add("em-chamas-incendiario");
+        let residuo = pacote.querySelector(".residuo-polvora-incendiario");
+        if (residuo) residuo.remove();
+        criarChamasIncendiario(pacote);
+        return;
+    }
+
+    if (estado === "polvora") {
+        if (pacote.classList.contains("em-chamas-incendiario")) pacote.classList.remove("em-chamas-incendiario");
+        if (!pacote.classList.contains("com-polvora-incendiario")) pacote.classList.add("com-polvora-incendiario");
+        let chamas = pacote.querySelector(".chamas-carta-incendiario");
+        if (chamas) chamas.remove();
+        criarResiduoPolvoraIncendiario(pacote);
+        return;
+    }
+
+    if (pacote.classList.contains("com-polvora-incendiario") || pacote.classList.contains("em-chamas-incendiario") || pacote.classList.contains("fogo-pulsando-incendiario")) {
+        pacote.classList.remove("com-polvora-incendiario", "em-chamas-incendiario", "fogo-pulsando-incendiario");
+    }
+    let residuo = pacote.querySelector(".residuo-polvora-incendiario");
+    let chamas = pacote.querySelector(".chamas-carta-incendiario");
+    if (residuo) residuo.remove();
+    if (chamas) chamas.remove();
+}
+
+function sincronizarVisuaisIncendiario() {
+    let estadosPorAlvo = {};
+
+    Object.keys(incendiarioAlvos).forEach(idIncendiario => {
+        let fase = incendiarioFasesVisuais[idIncendiario];
+        if (fase === undefined) fase = incendiarioCiclo[idIncendiario];
+        let estado = fase === 1 ? "polvora" : ((fase === 2 || fase === 3) ? "fogo" : null);
+        if (!estado) return;
+
+        (incendiarioAlvos[idIncendiario] || []).forEach(idPacoteAlvo => {
+            if (estado === "fogo" || !estadosPorAlvo[idPacoteAlvo]) estadosPorAlvo[idPacoteAlvo] = estado;
+        });
+    });
+
+    document.querySelectorAll("#campo-j1 > div[id^='pacote-'], #campo-j2 > div[id^='pacote-']").forEach(pacote => {
+        definirVisualIncendiario(pacote, estadosPorAlvo[pacote.id] || null);
+    });
+}
+
+function animarSalpicoPolvoraIncendiario(idIncendiario, idsPacotesAlvo) {
+    let incendiario = document.getElementById("pacote-" + idIncendiario);
+    if (!incendiario) return;
+
+    let origem = incendiario.getBoundingClientRect();
+    let origemX = origem.left + origem.width / 2;
+    let origemY = origem.top + origem.height * 0.42;
+
+    (idsPacotesAlvo || []).forEach((idPacoteAlvo, indiceAlvo) => {
+        let alvo = document.getElementById(idPacoteAlvo);
+        if (!alvo) return;
+        let destino = alvo.getBoundingClientRect();
+        let destinoX = destino.left + destino.width / 2;
+        let destinoY = destino.top + destino.height * 0.45;
+
+        for (let i = 0; i < 6; i++) {
+            let particula = document.createElement("i");
+            particula.className = "particula-polvora-incendiario";
+            particula.setAttribute("aria-hidden", "true");
+            particula.style.left = origemX + "px";
+            particula.style.top = origemY + "px";
+            particula.style.setProperty("--polvora-x", (destinoX - origemX + ((i % 3) - 1) * 18) + "px");
+            particula.style.setProperty("--polvora-y", (destinoY - origemY + (i < 3 ? -13 : 14)) + "px");
+            particula.style.setProperty("--polvora-meio-x", ((destinoX - origemX) / 2) + "px");
+            particula.style.setProperty("--polvora-meio-y", ((destinoY - origemY) / 2 - 38 - (i % 2) * 12) + "px");
+            particula.style.setProperty("--polvora-atraso", (indiceAlvo * 0.07 + i * 0.035) + "s");
+            document.body.appendChild(particula);
+            setTimeout(() => {
+                if (particula.parentNode) particula.remove();
+            }, 1350);
+        }
+    });
+}
+
+function animarFogoIncendiario(idPacoteAlvo, primeiroAcendimento) {
+    let pacote = document.getElementById(idPacoteAlvo);
+    if (!pacote) return;
+
+    pacote.classList.remove("fogo-pulsando-incendiario");
+    void pacote.offsetWidth;
+    pacote.classList.add("fogo-pulsando-incendiario");
+    setTimeout(() => {
+        if (pacote.isConnected) pacote.classList.remove("fogo-pulsando-incendiario");
+    }, 850);
+
+    let impacto = document.createElement("span");
+    impacto.className = "inicio-fogo-incendiario" + (primeiroAcendimento ? " primeira-chama-incendiario" : " chama-continuando-incendiario");
+    impacto.setAttribute("aria-hidden", "true");
+    for (let i = 0; i < 7; i++) {
+        let faisca = document.createElement("i");
+        faisca.style.setProperty("--faisca-x", (((i % 4) - 1.5) * 24) + "px");
+        faisca.style.setProperty("--faisca-y", (-28 - (i % 3) * 18) + "px");
+        faisca.style.setProperty("--faisca-atraso", (i * 0.035) + "s");
+        impacto.appendChild(faisca);
+    }
+    pacote.appendChild(impacto);
+    setTimeout(() => {
+        if (impacto.parentNode) impacto.remove();
+    }, 1050);
+}
+
+function obterCentroVisual(elemento) {
+    if (!elemento) return null;
+    let retangulo = elemento.getBoundingClientRect();
+    return {
+        x: retangulo.left + retangulo.width / 2,
+        y: retangulo.top + retangulo.height * 0.42
+    };
+}
+
+// 📦 BARRIL DE GOBLINS — o visual usa a própria vida do Barril. Como cada Goblin vale
+// 1 de vida e 0,25 de dano periódico, as três bolinhas sempre mostram quantos ainda vivem.
+function localizarStatusDentroDaCarta(pacote, idStatus) {
+    if (!pacote) return null;
+    return Array.from(pacote.querySelectorAll("[id]"))
+        .find(elemento => elemento.id === idStatus) || null;
+}
+
+function quantidadeGoblinsVivosBarril(idBarril) {
+    let pacoteBarril = document.getElementById("pacote-" + idBarril);
+    let vida = localizarStatusDentroDaCarta(pacoteBarril, "vida-" + idBarril);
+    if (!vida) return 0;
+
+    let valor = parseFloat(vida.innerText);
+    if (!Number.isFinite(valor) || valor <= 0) return 0;
+    return Math.max(0, Math.min(3, Math.ceil(valor)));
+}
+
+// Aplica SOMENTE o ataque periódico dos Goblins. A leitura da vida fica presa ao pacote
+// correto, evitando que IDs repetidos, animações ou outro vínculo atinjam uma carta errada.
+// O 0,75 mostrado no Barril já é o dano dos três Goblins (3 x 0,25), portanto só a parcela
+// acima/abaixo de 0,75 é tratada como buff ou redução — ela não pode ser somada duas vezes.
+function aplicarDanoPeriodicoBarrilGoblin(idBarril, idAlvo) {
+    let pacoteBarril = document.getElementById("pacote-" + idBarril);
+    let pacoteAlvo = document.getElementById("pacote-" + idAlvo);
+
+    if (!pacoteBarril || !pacoteAlvo) {
+        removerMarcadorBarrilGoblin(idBarril);
+        delete alvosDoBarril[idBarril];
+        return null;
+    }
+
+    let vidaBarrilEl = localizarStatusDentroDaCarta(pacoteBarril, "vida-" + idBarril);
+    let danoBarrilEl = localizarStatusDentroDaCarta(pacoteBarril, "dano-" + idBarril);
+    let vidaAlvoEl = localizarStatusDentroDaCarta(pacoteAlvo, "vida-" + idAlvo);
+    if (!vidaBarrilEl || !vidaAlvoEl) return null;
+
+    let vidaBarril = parseFloat(vidaBarrilEl.innerText);
+    let vidaAlvoAntes = parseFloat(vidaAlvoEl.innerText);
+    let danoAtualBarril = danoBarrilEl ? parseFloat(danoBarrilEl.innerText) : 0.75;
+    if (!Number.isFinite(vidaBarril) || !Number.isFinite(vidaAlvoAntes) || !Number.isFinite(danoAtualBarril)) return null;
+
+    let goblinsVivos = Math.max(0, Math.min(3, Math.ceil(vidaBarril)));
+    let modificadorDeDano = danoAtualBarril - 0.75;
+    let danoTotal = Math.max(0, Math.round(((goblinsVivos * 0.25) + modificadorDeDano) * 100) / 100);
+    let novaVida = Math.max(0, Math.round((vidaAlvoAntes - danoTotal) * 100) / 100);
+    let nomeExibido = pacoteAlvo.querySelector(".nome-carta") ? pacoteAlvo.querySelector(".nome-carta").innerText.trim() : "Carta";
+
+    if (danoTotal > 0) pulsarMarcadoresBarrilGoblin(idBarril);
+    vidaAlvoEl.innerText = novaVida;
+
+    // Esta é a única condição em que o ataque dos Goblins pode remover o alvo.
+    if (novaVida <= 0) {
+        let nomeEfetivo = obterNomeEfetivoCarta(idAlvo, nomeExibido);
+        let campoDestino = pacoteAlvo.closest("#campo-j2") ? "campo-j2" : "campo-j1";
+        registrarMorte(nomeEfetivo, campoDestino === "campo-j2" ? "j2" : "j1");
+        guardarOrigemTransformacaoOrk(nomeEfetivo, idAlvo, pacoteAlvo);
+        pacoteAlvo.remove();
+        removerMarcadorBarrilGoblin(idBarril);
+        delete alvosDoBarril[idBarril];
+        ativarPassivasAoMorrer(nomeEfetivo, idAlvo, campoDestino);
+        return { danoTotal, novaVida, nomeAlvo: nomeExibido, destruido: true };
+    }
+
+    return { danoTotal, novaVida, nomeAlvo: nomeExibido, destruido: false };
+}
+
+function localizarMarcadorBarrilGoblin(idBarril) {
+    return Array.from(document.querySelectorAll(".marcadores-goblins-barril"))
+        .find(marcador => marcador.dataset.barrilId === String(idBarril)) || null;
+}
+
+function criarMarcadorBarrilGoblin(idBarril, pacoteAlvo, vivos) {
+    let marcador = document.createElement("span");
+    marcador.className = "marcadores-goblins-barril";
+    marcador.dataset.barrilId = idBarril;
+    marcador.dataset.vivos = String(vivos);
+    marcador.setAttribute("aria-hidden", "true");
+
+    for (let indice = 0; indice < 3; indice++) {
+        let goblin = document.createElement("i");
+        goblin.className = "bolinha-goblin-barril" + (indice < vivos ? "" : " goblin-barril-morto");
+        marcador.appendChild(goblin);
+    }
+
+    pacoteAlvo.appendChild(marcador);
+    return marcador;
+}
+
+function atualizarMarcadorBarrilGoblin(idBarril, pacoteAlvo, vivos, linha) {
+    let marcador = localizarMarcadorBarrilGoblin(idBarril);
+    if (marcador && marcador.parentElement !== pacoteAlvo) {
+        marcador.remove();
+        marcador = null;
+    }
+    if (!marcador) marcador = criarMarcadorBarrilGoblin(idBarril, pacoteAlvo, vivos);
+
+    marcador.style.setProperty("--linha-barril-goblin", linha || 0);
+    let anteriores = parseInt(marcador.dataset.vivos, 10);
+    if (!Number.isFinite(anteriores)) anteriores = vivos;
+    marcador.dataset.vivos = String(vivos);
+
+    Array.from(marcador.children).forEach((bolinha, indice) => {
+        if (indice < vivos) {
+            bolinha.classList.remove("goblin-barril-morto", "goblin-barril-sumindo");
+            return;
+        }
+
+        if (indice < anteriores) {
+            bolinha.classList.remove("goblin-barril-pulsando");
+            bolinha.classList.add("goblin-barril-sumindo");
+            setTimeout(() => {
+                if (!bolinha.isConnected || indice < parseInt(marcador.dataset.vivos, 10)) return;
+                bolinha.classList.remove("goblin-barril-sumindo");
+                bolinha.classList.add("goblin-barril-morto");
+            }, 430);
+        } else if (!bolinha.classList.contains("goblin-barril-sumindo")) {
+            bolinha.classList.add("goblin-barril-morto");
+        }
+    });
+}
+
+function removerMarcadorBarrilGoblin(idBarril) {
+    let marcador = localizarMarcadorBarrilGoblin(idBarril);
+    if (marcador) marcador.remove();
+    delete pulsosBarrilGoblinPendentes[idBarril];
+    delete lancamentosBarrilGoblinEmCurso[idBarril];
+}
+
+function sincronizarMarcadoresBarrilGoblin() {
+    let linhasPorAlvo = {};
+    let idsAtivos = new Set();
+
+    Object.keys(alvosDoBarril).forEach(idBarril => {
+        idsAtivos.add(String(idBarril));
+        let idAlvo = alvosDoBarril[idBarril];
+        let pacoteBarril = document.getElementById("pacote-" + idBarril);
+        let pacoteAlvo = document.getElementById("pacote-" + idAlvo);
+
+        if (!pacoteBarril || !pacoteAlvo) {
+            removerMarcadorBarrilGoblin(idBarril);
+            delete alvosDoBarril[idBarril];
+            return;
+        }
+
+        // Durante o lançamento, as bolinhas só aparecem depois que o Barril pousa.
+        if (lancamentosBarrilGoblinEmCurso[idBarril]) return;
+
+        let vivos = quantidadeGoblinsVivosBarril(idBarril);
+        if (vivos <= 0) {
+            removerMarcadorBarrilGoblin(idBarril);
+            return;
+        }
+
+        let linha = linhasPorAlvo[idAlvo] || 0;
+        linhasPorAlvo[idAlvo] = linha + 1;
+        atualizarMarcadorBarrilGoblin(idBarril, pacoteAlvo, vivos, linha);
+    });
+
+    document.querySelectorAll(".marcadores-goblins-barril").forEach(marcador => {
+        if (!idsAtivos.has(marcador.dataset.barrilId)) marcador.remove();
+    });
+}
+
+function pulsarMarcadoresBarrilGoblin(idBarril) {
+    if (lancamentosBarrilGoblinEmCurso[idBarril]) {
+        pulsosBarrilGoblinPendentes[idBarril] = true;
+        return;
+    }
+
+    sincronizarMarcadoresBarrilGoblin();
+    let marcador = localizarMarcadorBarrilGoblin(idBarril);
+    if (!marcador) return;
+
+    let vivos = quantidadeGoblinsVivosBarril(idBarril);
+    Array.from(marcador.children).slice(0, vivos).forEach((bolinha, indice) => {
+        bolinha.classList.remove("goblin-barril-pulsando");
+        void bolinha.offsetWidth;
+        bolinha.style.setProperty("--atraso-pulso-goblin", (indice * 0.07) + "s");
+        bolinha.classList.add("goblin-barril-pulsando");
+        setTimeout(() => {
+            if (bolinha.isConnected) bolinha.classList.remove("goblin-barril-pulsando");
+        }, 720 + indice * 70);
+    });
+}
+
+function animarLancamentoBarrilGoblin(idBarril, idAlvo) {
+    let pacoteBarril = document.getElementById("pacote-" + idBarril);
+    let pacoteAlvo = document.getElementById("pacote-" + idAlvo);
+    if (!pacoteBarril || !pacoteAlvo) return;
+
+    let origem = obterCentroVisual(pacoteBarril);
+    let destino = obterCentroVisual(pacoteAlvo);
+    if (!origem || !destino) return;
+
+    lancamentosBarrilGoblinEmCurso[idBarril] = true;
+    removerMarcadorBarrilGoblin(idBarril);
+    lancamentosBarrilGoblinEmCurso[idBarril] = true;
+
+    let barril = document.createElement("span");
+    barril.className = "barril-goblin-lancado";
+    barril.setAttribute("aria-hidden", "true");
+    barril.style.left = origem.x + "px";
+    barril.style.top = origem.y + "px";
+    barril.style.setProperty("--barril-goblin-x", (destino.x - origem.x) + "px");
+    barril.style.setProperty("--barril-goblin-y", (destino.y - origem.y) + "px");
+    barril.style.setProperty("--barril-goblin-meio-x", ((destino.x - origem.x) / 2) + "px");
+    barril.style.setProperty("--barril-goblin-meio-y", ((destino.y - origem.y) / 2 - 105) + "px");
+
+    let imagemOriginal = pacoteBarril.querySelector("img");
+    if (imagemOriginal) {
+        let imagem = document.createElement("img");
+        imagem.src = imagemOriginal.src;
+        imagem.alt = "";
+        barril.appendChild(imagem);
+    } else {
+        barril.textContent = "🛢️";
+    }
+    document.body.appendChild(barril);
+
+    setTimeout(() => {
+        let alvoAtual = document.getElementById("pacote-" + idAlvo);
+        if (alvoAtual) {
+            let impacto = document.createElement("span");
+            impacto.className = "impacto-barril-goblin";
+            impacto.setAttribute("aria-hidden", "true");
+            for (let i = 0; i < 6; i++) {
+                let poeira = document.createElement("i");
+                poeira.style.setProperty("--poeira-barril-x", (((i % 3) - 1) * 30) + "px");
+                poeira.style.setProperty("--poeira-barril-y", (-18 - (i % 2) * 22) + "px");
+                impacto.appendChild(poeira);
+            }
+            alvoAtual.appendChild(impacto);
+            setTimeout(() => { if (impacto.parentNode) impacto.remove(); }, 680);
+        }
+
+        delete lancamentosBarrilGoblinEmCurso[idBarril];
+        sincronizarMarcadoresBarrilGoblin();
+        if (pulsosBarrilGoblinPendentes[idBarril]) {
+            delete pulsosBarrilGoblinPendentes[idBarril];
+            setTimeout(() => pulsarMarcadoresBarrilGoblin(idBarril), 70);
+        }
+    }, 620);
+
+    setTimeout(() => { if (barril.parentNode) barril.remove(); }, 880);
+}
+
+function criarVooBumerangue(origem, destino, atraso = 0, retornando = false) {
+    if (!origem || !destino) return;
+
+    let bumerangue = document.createElement("span");
+    bumerangue.className = "bumerangue-voando" + (retornando ? " bumerangue-retornando" : "");
+    bumerangue.textContent = "🪃";
+    bumerangue.setAttribute("aria-hidden", "true");
+    bumerangue.style.left = origem.x + "px";
+    bumerangue.style.top = origem.y + "px";
+    bumerangue.style.setProperty("--bume-x", (destino.x - origem.x) + "px");
+    bumerangue.style.setProperty("--bume-y", (destino.y - origem.y) + "px");
+    bumerangue.style.setProperty("--bume-meio-x", ((destino.x - origem.x) / 2) + "px");
+    bumerangue.style.setProperty("--bume-meio-y", ((destino.y - origem.y) / 2 - (retornando ? 34 : 46)) + "px");
+    bumerangue.style.setProperty("--bume-atraso", atraso + "s");
+    document.body.appendChild(bumerangue);
+
+    setTimeout(() => {
+        if (bumerangue.parentNode) bumerangue.remove();
+    }, (atraso + 0.9) * 1000);
+}
+
+function iniciarTrajetoVisualBumerangue(idBumerskeleton, idPrimeiroAlvo) {
+    let bume = document.getElementById("pacote-" + idBumerskeleton);
+    let primeiroAlvo = document.getElementById("pacote-" + idPrimeiroAlvo);
+    let origem = obterCentroVisual(bume);
+    let destino = obterCentroVisual(primeiroAlvo);
+
+    trajetosVisuaisBumerangue[idBumerskeleton] = [];
+    if (origem) trajetosVisuaisBumerangue[idBumerskeleton].push(origem);
+    if (destino) trajetosVisuaisBumerangue[idBumerskeleton].push(destino);
+    criarVooBumerangue(origem, destino, 0, false);
+
+    return destino || origem;
+}
+
+function registrarRicocheteVisualBumerangue(idBumerskeleton, origem, pacoteDestino, atraso) {
+    let destino = obterCentroVisual(pacoteDestino);
+    if (!destino) return origem;
+
+    if (!trajetosVisuaisBumerangue[idBumerskeleton]) trajetosVisuaisBumerangue[idBumerskeleton] = [];
+    trajetosVisuaisBumerangue[idBumerskeleton].push(destino);
+    criarVooBumerangue(origem, destino, atraso, false);
+    return destino;
+}
+
+function animarRetornoBumerangue(idBumerskeleton) {
+    let pontos = trajetosVisuaisBumerangue[idBumerskeleton] || [];
+    if (pontos.length < 2) return;
+
+    let atraso = 0;
+    for (let i = pontos.length - 1; i > 0; i--) {
+        criarVooBumerangue(pontos[i], pontos[i - 1], atraso, true);
+        atraso += 0.34;
+    }
+}
+
+function ativarFogoVisualBumerskeleton(idAlvo) {
+    let pacote = document.getElementById("pacote-" + idAlvo);
+    if (!pacote) return;
+
+    pacote.classList.add("fogo-bumerskeleton");
+    let chamas = pacote.querySelector(".chamas-bumerskeleton");
+    if (!chamas) {
+        chamas = document.createElement("span");
+        chamas.className = "chamas-bumerskeleton";
+        chamas.setAttribute("aria-hidden", "true");
+        for (let i = 0; i < 4; i++) {
+            let chama = document.createElement("b");
+            chama.textContent = "🔥";
+            chama.style.setProperty("--fogo-bume-x", (8 + i * 28) + "%");
+            chama.style.setProperty("--fogo-bume-atraso", (i * -0.14) + "s");
+            chamas.appendChild(chama);
+        }
+        pacote.appendChild(chamas);
+    }
+
+    pacote.classList.remove("impacto-fogo-bumerskeleton");
+    void pacote.offsetWidth;
+    pacote.classList.add("impacto-fogo-bumerskeleton");
+
+    if (timersFogoBumerskeleton[idAlvo]) clearTimeout(timersFogoBumerskeleton[idAlvo]);
+    timersFogoBumerskeleton[idAlvo] = setTimeout(() => {
+        let cartaAtual = document.getElementById("pacote-" + idAlvo);
+        if (cartaAtual) {
+            cartaAtual.classList.remove("fogo-bumerskeleton", "impacto-fogo-bumerskeleton");
+            let fogoAtual = cartaAtual.querySelector(".chamas-bumerskeleton");
+            if (fogoAtual) fogoAtual.remove();
+        }
+        delete timersFogoBumerskeleton[idAlvo];
+    }, 2300);
+}
+
+function criarFragmentosGeloBumerskeleton(pacote) {
+    if (!pacote || pacote.querySelector(".fragmentos-gelo-bumerskeleton")) return;
+
+    let fragmentos = document.createElement("span");
+    fragmentos.className = "fragmentos-gelo-bumerskeleton";
+    fragmentos.setAttribute("aria-hidden", "true");
+    for (let i = 0; i < 9; i++) {
+        let fragmento = document.createElement("i");
+        fragmento.style.setProperty("--gelo-bume-x", (8 + ((i * 29) % 84)) + "%");
+        fragmento.style.setProperty("--gelo-bume-y", (10 + ((i * 43) % 78)) + "%");
+        fragmento.style.setProperty("--gelo-bume-atraso", (i * -0.17) + "s");
+        fragmentos.appendChild(fragmento);
+    }
+    pacote.appendChild(fragmentos);
+}
+
+function ativarGeloVisualBumerskeleton(idAlvo) {
+    geloBumerskeletonAtivos[idAlvo] = true;
+    let pacote = document.getElementById("pacote-" + idAlvo);
+    if (!pacote) return;
+
+    if (!pacote.classList.contains("gelo-bumerskeleton")) pacote.classList.add("gelo-bumerskeleton");
+    criarFragmentosGeloBumerskeleton(pacote);
+
+    let impacto = document.createElement("span");
+    impacto.className = "impacto-gelo-bumerskeleton";
+    impacto.setAttribute("aria-hidden", "true");
+    impacto.textContent = "❄";
+    pacote.appendChild(impacto);
+    setTimeout(() => {
+        if (impacto.parentNode) impacto.remove();
+    }, 950);
+}
+
+function removerGeloVisualBumerskeleton(idAlvo) {
+    delete geloBumerskeletonAtivos[idAlvo];
+    let pacote = document.getElementById("pacote-" + idAlvo);
+    if (!pacote) return;
+    pacote.classList.remove("gelo-bumerskeleton");
+    let fragmentos = pacote.querySelector(".fragmentos-gelo-bumerskeleton");
+    if (fragmentos) fragmentos.remove();
+}
+
+function sincronizarVisuaisGeloBumerskeleton() {
+    Object.keys(geloBumerskeletonAtivos).forEach(idAlvo => {
+        let pacote = document.getElementById("pacote-" + idAlvo);
+        if (!duracaoGelo[idAlvo]) {
+            removerGeloVisualBumerskeleton(idAlvo);
+        } else if (pacote && pacote.classList.contains("congelada")) {
+            if (!pacote.classList.contains("gelo-bumerskeleton")) pacote.classList.add("gelo-bumerskeleton");
+            criarFragmentosGeloBumerskeleton(pacote);
+        }
+    });
+}
+
+function animarAtaqueAreaCavaleiro(idCavaleiro, pacoteAlvoPrincipal, alvosAtingidos, especialAtivo) {
+    let cavaleiro = document.getElementById("pacote-" + idCavaleiro);
+    if (!cavaleiro || !pacoteAlvoPrincipal) return;
+
+    let origem = obterCentroVisual(cavaleiro);
+    let destino = obterCentroVisual(pacoteAlvoPrincipal);
+    if (!origem || !destino) return;
+
+    let arma = document.createElement("span");
+    arma.className = especialAtivo ? "arma-cavaleiro arma-grande-cavaleiro" : "arma-cavaleiro arma-pequena-cavaleiro";
+    arma.textContent = "🗡️";
+    arma.setAttribute("aria-hidden", "true");
+
+    if (especialAtivo) {
+        arma.style.left = destino.x + "px";
+        arma.style.top = destino.y + "px";
+    } else {
+        arma.style.left = origem.x + "px";
+        arma.style.top = origem.y + "px";
+        arma.style.setProperty("--arma-cavaleiro-x", (destino.x - origem.x) + "px");
+        arma.style.setProperty("--arma-cavaleiro-y", (destino.y - origem.y) + "px");
+        arma.style.setProperty("--arma-cavaleiro-meio-x", ((destino.x - origem.x) / 2) + "px");
+        arma.style.setProperty("--arma-cavaleiro-meio-y", ((destino.y - origem.y) / 2 - 36) + "px");
+    }
+    document.body.appendChild(arma);
+
+    let atrasoImpacto = especialAtivo ? 390 : 330;
+    let dadosDosAlvos = (alvosAtingidos || []).map(pacote => {
+        let retangulo = pacote.getBoundingClientRect();
+        return {
+            id: pacote.id,
+            left: retangulo.left,
+            top: retangulo.top,
+            width: retangulo.width,
+            height: retangulo.height
+        };
+    });
+
+    setTimeout(() => {
+        dadosDosAlvos.forEach((alvo, indice) => {
+            let onda = document.createElement("span");
+            onda.className = "onda-area-cavaleiro" + (especialAtivo ? " onda-grande-cavaleiro" : " onda-pequena-cavaleiro");
+            onda.setAttribute("aria-hidden", "true");
+            onda.style.left = (alvo.left + alvo.width / 2) + "px";
+            onda.style.top = (alvo.top + alvo.height / 2) + "px";
+            onda.style.width = alvo.width + "px";
+            onda.style.height = alvo.height + "px";
+            onda.style.setProperty("--onda-cavaleiro-atraso", (indice * 0.06) + "s");
+            document.body.appendChild(onda);
+
+            let pacoteAtual = document.getElementById(alvo.id);
+            if (pacoteAtual) {
+                let classeImpacto = especialAtivo ? "impacto-grande-cavaleiro" : "impacto-pequeno-cavaleiro";
+                pacoteAtual.classList.remove(classeImpacto);
+                void pacoteAtual.offsetWidth;
+                pacoteAtual.classList.add(classeImpacto);
+                setTimeout(() => {
+                    if (pacoteAtual.isConnected) pacoteAtual.classList.remove(classeImpacto);
+                }, 820);
+            }
+
+            setTimeout(() => {
+                if (onda.parentNode) onda.remove();
+            }, 1000 + indice * 60);
+        });
+    }, atrasoImpacto);
+
+    setTimeout(() => {
+        if (arma.parentNode) arma.remove();
+    }, especialAtivo ? 1050 : 880);
+}
 
 function narrar(mensagem) {
     document.getElementById("painel-narrador").innerText = mensagem;
@@ -97,6 +946,67 @@ function narrar(mensagem) {
 function obterNomeEfetivoCarta(idUnico, nomeExibido) {
     let copia = (typeof ctrlV !== 'undefined' && ctrlV[idUnico]) ? ctrlV[idUnico] : null;
     return (copia && copia.nomeOriginal) ? copia.nomeOriginal : (nomeExibido || "");
+}
+
+// 🧬 CTRL C / CTRL V — a gosma se deforma enquanto uma cópia luminosa da última
+// carta usada pelo oponente é absorvida. A mecânica acontece normalmente, sem esperar
+// a animação, para não atrasar o turno nem o bot.
+function animarMetamorfoseCtrl(idCtrl, nomeCopiado, ehAliado) {
+    let pacoteCtrl = document.getElementById("pacote-" + idCtrl);
+    if (!pacoteCtrl) return;
+
+    // A carta usada fica no campo; não procura na mão para não animar por engano outra
+    // cópia do mesmo tipo que o oponente ainda nem jogou.
+    let recipientesOpostos = ehAliado ? ["#campo-j2"] : ["#campo-j1"];
+    let candidatas = recipientesOpostos.flatMap(seletor => {
+        let recipiente = document.querySelector(seletor);
+        return recipiente ? Array.from(recipiente.querySelectorAll("div[id^='pacote-']")) : [];
+    })
+        .filter(pacote => {
+            let nome = pacote.querySelector(".nome-carta");
+            return nome && nome.innerText.trim() === nomeCopiado;
+        });
+    let pacoteCopiado = candidatas.length ? candidatas[candidatas.length - 1] : null;
+    let rectCtrl = pacoteCtrl.getBoundingClientRect();
+    let rectOrigem = pacoteCopiado ? pacoteCopiado.getBoundingClientRect() : rectCtrl;
+    let imagemCopiada = pacoteCopiado ? pacoteCopiado.querySelector("img") : null;
+
+    let origemX = rectOrigem.left + rectOrigem.width / 2;
+    let origemY = rectOrigem.top + rectOrigem.height / 2;
+    let destinoX = rectCtrl.left + rectCtrl.width / 2;
+    let destinoY = rectCtrl.top + rectCtrl.height / 2;
+
+    let copia = document.createElement("div");
+    copia.className = "copia-metamorfa-ctrl";
+    copia.style.setProperty("--ctrl-origem-x", origemX + "px");
+    copia.style.setProperty("--ctrl-origem-y", origemY + "px");
+    copia.style.setProperty("--ctrl-meio-x", ((origemX + destinoX) / 2) + "px");
+    copia.style.setProperty("--ctrl-meio-y", (Math.min(origemY, destinoY) - 48) + "px");
+    copia.style.setProperty("--ctrl-destino-x", destinoX + "px");
+    copia.style.setProperty("--ctrl-destino-y", destinoY + "px");
+    copia.innerHTML = imagemCopiada && imagemCopiada.src
+        ? `<img src="${imagemCopiada.src}" alt=""><span>${nomeCopiado}</span>`
+        : `<b>🧬</b><span>${nomeCopiado}</span>`;
+
+    let pulso = document.createElement("div");
+    pulso.className = "pulso-metamorfo-ctrl";
+    pulso.style.left = destinoX + "px";
+    pulso.style.top = destinoY + "px";
+    pulso.innerHTML = "<i></i><i></i><i></i>";
+
+    document.body.appendChild(copia);
+    document.body.appendChild(pulso);
+    pacoteCtrl.classList.remove("ctrl-metamorfo-balancando");
+    void pacoteCtrl.offsetWidth;
+    pacoteCtrl.classList.add("ctrl-metamorfo-balancando");
+    if (pacoteCopiado) pacoteCopiado.classList.add("fonte-copia-ctrl");
+
+    setTimeout(() => {
+        copia.remove();
+        pulso.remove();
+        if (pacoteCtrl.isConnected) pacoteCtrl.classList.remove("ctrl-metamorfo-balancando");
+        if (pacoteCopiado && pacoteCopiado.isConnected) pacoteCopiado.classList.remove("fonte-copia-ctrl");
+    }, 1450);
 }
 
 function obterModoCartaAliada() {
@@ -122,18 +1032,48 @@ function obterModoCartaInimiga() {
     return "receber-ataque";
 }
 
-function removerVenenoDoMago(idMago) {
-    let efeito = venenosMago[idMago];
+function removerVenenoDoMago(idEfeitoVeneno) {
+    let efeito = venenosMago[idEfeitoVeneno];
     if (!efeito) return;
 
     let idAlvo = efeito.idAlvo;
-    delete venenosMago[idMago];
+    delete venenosMago[idEfeitoVeneno];
 
     let aindaEstaEnvenenado = Object.values(venenosMago).some(outro => outro.idAlvo === idAlvo);
     if (!aindaEstaEnvenenado) {
         let pacoteAlvo = document.getElementById("pacote-" + idAlvo);
         if (pacoteAlvo) pacoteAlvo.classList.remove("envenenada");
     }
+}
+
+function animarGarrafaVeneno(idMago, idAlvo) {
+    let mago = document.getElementById("pacote-" + idMago);
+    let alvo = document.getElementById("pacote-" + idAlvo);
+    if (!mago || !alvo) return;
+
+    let origem = mago.getBoundingClientRect();
+    let destino = alvo.getBoundingClientRect();
+    let inicioX = origem.left + origem.width / 2;
+    let inicioY = origem.top + origem.height / 2;
+    let distanciaX = (destino.left + destino.width / 2) - inicioX;
+    let distanciaY = (destino.top + destino.height / 2) - inicioY;
+
+    let garrafa = document.createElement("span");
+    garrafa.className = "garrafa-veneno-lancada";
+    garrafa.textContent = "🧪";
+    garrafa.setAttribute("aria-hidden", "true");
+    garrafa.style.left = inicioX + "px";
+    garrafa.style.top = inicioY + "px";
+    garrafa.style.setProperty("--veneno-x", distanciaX + "px");
+    garrafa.style.setProperty("--veneno-y", distanciaY + "px");
+    garrafa.style.setProperty("--veneno-meio-x", distanciaX / 2 + "px");
+    garrafa.style.setProperty("--veneno-meio-y", distanciaY / 2 - 42 + "px");
+    document.body.appendChild(garrafa);
+
+    garrafa.addEventListener("animationend", () => garrafa.remove(), { once: true });
+    setTimeout(() => {
+        if (garrafa.parentNode) garrafa.remove();
+    }, 1000);
 }
 
 function aplicarAlvoVenenoMago(idPacoteAlvo) {
@@ -154,10 +1094,20 @@ function aplicarAlvoVenenoMago(idPacoteAlvo) {
     }
 
     let idAlvo = idPacoteAlvo.replace("pacote-", "");
-    if (venenosMago[idMagoVenenoAtivo]) removerVenenoDoMago(idMagoVenenoAtivo);
-    venenosMago[idMagoVenenoAtivo] = { idAlvo: idAlvo, restam: 4 };
+    // Cada lançamento recebe seu próprio registro. Se o mesmo Mago escolher novamente
+    // a MESMA carta, apenas renova as duas rodadas; em outro alvo, ambos continuam ativos.
+    let idEfeitoExistente = Object.keys(venenosMago).find(idEfeito => {
+        let efeito = venenosMago[idEfeito];
+        return efeito.idMago === idMagoVenenoAtivo && efeito.idAlvo === idAlvo;
+    });
+    if (idEfeitoExistente) {
+        venenosMago[idEfeitoExistente].restam = 4;
+    } else {
+        let idEfeitoNovo = `veneno-${idMagoVenenoAtivo}-${proximoIdVenenoMago++}`;
+        venenosMago[idEfeitoNovo] = { idMago: idMagoVenenoAtivo, idAlvo: idAlvo, restam: 4 };
+    }
     pacoteAlvo.classList.add("envenenada");
-    animarVenenoMago(idMagoVenenoAtivo, idAlvo);
+    animarGarrafaVeneno(idMagoVenenoAtivo, idAlvo);
 
     let nomeAlvo = pacoteAlvo.querySelector(".nome-carta").innerText.trim();
     modoAlvoVenenoMago = false;
@@ -342,6 +1292,7 @@ function rolarDado() {
 // mesmo que ainda tenha ataque possível. Limpa qualquer escolha de alvo pendente
 // pra garantir que o próximo turno não comece bugado.
 function passarVezManual() {
+    if (barrilBarbaroEmAnimacao) return narrar("🪵 Espere o Barril de Bárbaro terminar o impacto!");
     if (faseAbertura === true) return narrar("⏳ Escolha sua carta de abertura primeiro!");
     if (!jogoIniciado) return narrar("⏳ Role o dado de iniciativa primeiro!");
     // 🚨 Sem isso, dava pra clicar em "Passar a Vez" durante o turno do OPONENTE (ex: logo
@@ -377,15 +1328,20 @@ function passarTurno() {
     // 1. CHECAGEM DE REATAQUES (Se ativar, sai da função sem passar o turno)
     if (ultimoIdQueAtacou && goblinAtaquesGanhos[ultimoIdQueAtacou] === true) {
         goblinAtaquesGanhos[ultimoIdQueAtacou] = false; 
+        ativarEfeitoVelocidade(ultimoIdQueAtacou);
         narrar("🔥 PASSIVA: O Goblin ganhou o direito de atacar mais uma vez nesta rodada!");
         return; 
     }
 
     if (ultimoIdQueAtacou && pocaoVeluxAtiva[ultimoIdQueAtacou] === true) {
         pocaoVeluxAtiva[ultimoIdQueAtacou] = false; 
+        ativarEfeitoVelocidade(ultimoIdQueAtacou);
         narrar("⚡ EFEITO VELUX: Na velocidade da luz! A carta que acabou de atacar tem direito a MAIS UM ATAQUE agora!");
         return; 
     }
+
+    // Chegou aqui depois que todos os ataques extras dessa carta foram usados.
+    if (ultimoIdQueAtacou) removerEfeitoVelocidade(ultimoIdQueAtacou);
     
     // 2. RESET DE VARIÁVEIS DA RODADA
     goblinJaAtacouNesteTurno = {};
@@ -430,44 +1386,27 @@ function passarTurno() {
     // 4. --- MALDIÇÃO DO BARRIL DE GOBLINS (Dano por rodada) ---
     if (typeof alvosDoBarril !== 'undefined') {
         Object.keys(alvosDoBarril).forEach(idBarril => {
-            let pacoteBarril = document.getElementById("pacote-" + idBarril);
             let idAlvo = alvosDoBarril[idBarril];
-            let pacoteAlvo = document.getElementById("pacote-" + idAlvo);
+            let resultado = aplicarDanoPeriodicoBarrilGoblin(idBarril, idAlvo);
+            if (!resultado) return;
 
-            if (!pacoteBarril || !pacoteAlvo) {
-                delete alvosDoBarril[idBarril];
-                return;
-            }
-
-            let txtVida = document.getElementById("vida-" + idBarril);
-            let txtDano = document.getElementById("dano-" + idBarril);
-
-            if (txtVida) {
-                let vidaBarril = parseFloat(txtVida.innerText);
-                let buffDano = txtDano ? parseFloat(txtDano.innerText) : 0; 
-                
-                let danoTotal = (vidaBarril * 0.25) + buffDano; 
-                
-                let isInimigo = pacoteAlvo.closest("#campo-j2") !== null;
-                if (typeof aplicarDanoDireto === "function") {
-                    animarGoblinsDoBarril(idBarril, idAlvo, false);
-                    aplicarDanoDireto("pacote-" + idAlvo, danoTotal, isInimigo);
-                    narrar(`⚔️ Os Goblins do Barril atacaram o alvo causando ${danoTotal} de dano extra no fim do turno!`);
-                }
+            if (resultado.destruido) {
+                narrar(`💀 Os Goblins do Barril causaram ${resultado.danoTotal} de dano e derrotaram [${resultado.nomeAlvo}]!`);
+            } else {
+                narrar(`⚔️ Os Goblins do Barril atacaram [${resultado.nomeAlvo}] causando ${resultado.danoTotal} de dano no fim do turno! Vida restante: ${resultado.novaVida}.`);
             }
         });
     }
 
     // 4.1 --- VENENO DO MAGO ---
-    // Duas rodadas completas equivalem a quatro passagens de turno. Assim como os Goblins
-    // do Barril, o dano só continua enquanto a carta que criou o efeito estiver na arena.
-    Object.keys(venenosMago).forEach(idMago => {
-        let efeito = venenosMago[idMago];
-        let pacoteMago = document.getElementById("pacote-" + idMago);
+    // Duas rodadas completas equivalem a quatro passagens de turno. Depois de aplicado,
+    // o veneno pertence ao alvo e continua mesmo que o Mago seja derrotado.
+    Object.keys(venenosMago).forEach(idEfeitoVeneno => {
+        let efeito = venenosMago[idEfeitoVeneno];
         let pacoteAlvo = document.getElementById("pacote-" + efeito.idAlvo);
 
-        if (!pacoteMago || !pacoteAlvo) {
-            removerVenenoDoMago(idMago);
+        if (!pacoteAlvo) {
+            removerVenenoDoMago(idEfeitoVeneno);
             return;
         }
 
@@ -478,7 +1417,7 @@ function passarTurno() {
         efeito.restam--;
 
         if (efeito.restam <= 0 || !document.getElementById(pacoteAlvo.id)) {
-            removerVenenoDoMago(idMago);
+            removerVenenoDoMago(idEfeitoVeneno);
             narrar(`☠️ ${nomeAlvo} sofreu os últimos 0,5 de dano. O veneno acabou!`);
         } else {
             narrar(`☠️ O veneno causou 0,5 de dano em ${nomeAlvo}! Restam ${efeito.restam} jogadas.`);
@@ -520,6 +1459,7 @@ function passarTurno() {
                 if (pacote) {
                     pacote.classList.remove("congelada");
                     pacote.style.filter = "none"; // 🚨 ADICIONAMOS ISSO AQUI: Remove a cor azul do Bumerskeleton!
+                    removerGeloVisualBumerskeleton(idCarta);
                     narrar(`☀️ O gelo derreteu! ${nomeReal} se libertou!`);
                 }
                 delete duracaoGelo[idCarta]; 
@@ -538,8 +1478,6 @@ function passarTurno() {
                     let ladoCavalo = pacoteCavalo.closest("#campo-j2") ? "j2" : "j1";
                     let ladoInimigo = (ladoCavalo === "j1") ? "j2" : "j1";
                     narrar("🐴 SURPRESA! O Cavalo de Tróia se abriu e atingiu TODAS as cartas inimigas (campo e mão) com 1 de dano!");
-                    mostrarImpactoVfx(idCarta, "explosao");
-                    mostrarExplosaoNoCampo("campo-" + ladoInimigo);
                     aplicarDanoCavaloDeTroia(ladoInimigo, 1);
                     pacoteCavalo.remove();
                 }
@@ -728,6 +1666,7 @@ function invocarToken(idBaseCarta, idCampo) {
                 narrar("❌ O Barril não pode proteger a si mesmo! Escolha outra carta.");
             } else {
                 cartasProtegidas[idSemPacote] = idBarrilProtetor;
+                ativarVisualProtecaoBarril(idSemPacote, idBarrilProtetor);
                 narrar(`🛡️ Vínculo criado! O Barril agora dará a vida para proteger esta carta!`);
             }
             modoProtecaoBarril = false; idBarrilProtetor = null;
@@ -737,6 +1676,7 @@ function invocarToken(idBaseCarta, idCampo) {
                 narrar("❌ O Barril não pode proteger a si mesmo! Escolha outra carta.");
             } else {
                 cartasProtegidas[idSemPacoteLocal] = idBarrilProtetor;
+                ativarVisualProtecaoBarril(idSemPacoteLocal, idBarrilProtetor);
                 narrar(`🛡️ Vínculo criado! O Barril inimigo agora protegerá esta carta!`);
             }
             modoProtecaoBarrilInimigo = false; idBarrilProtetor = null;
@@ -754,6 +1694,7 @@ function invocarToken(idBaseCarta, idCampo) {
     if (divAcoes) divAcoes.style.display = "block";
 
     atualizarTodosUnidoes();
+    return pacoteNovo;
 }
 function invocarTokenPeloNomeSemHabilidade(nomeCarta, idCampo) {
     let cartaBase = bancoDeCartas.find(c => c.nome === nomeCarta);
@@ -800,14 +1741,20 @@ function invocarTokenPeloNomeSemHabilidade(nomeCarta, idCampo) {
             // 🛡️ ADICIONADO: Interceção para criar vínculo no Token Aliado
             if (typeof modoProtecaoBarril !== 'undefined' && modoProtecaoBarril && ehAliado) {
                 let protegerASiMesmo = (idSemPacote === idBarrilProtetor);
-                if (!protegerASiMesmo) cartasProtegidas[idSemPacote] = idBarrilProtetor;
+                if (!protegerASiMesmo) {
+                    cartasProtegidas[idSemPacote] = idBarrilProtetor;
+                    ativarVisualProtecaoBarril(idSemPacote, idBarrilProtetor);
+                }
                 modoProtecaoBarril = false; idBarrilProtetor = null;
                 return narrar(protegerASiMesmo ? "❌ O Barril não pode proteger a si mesmo! Escolha outra carta." : `🛡️ Vínculo criado! O Barril agora dará a vida para proteger este token!`);
             }
             // 🛡️ ADICIONADO: Interceção para criar vínculo no Token Inimigo
             else if (typeof modoProtecaoBarrilInimigo !== 'undefined' && modoProtecaoBarrilInimigo && !ehAliado) {
                 let protegerASiMesmo = (idSemPacote === idBarrilProtetor);
-                if (!protegerASiMesmo) cartasProtegidas[idSemPacote] = idBarrilProtetor;
+                if (!protegerASiMesmo) {
+                    cartasProtegidas[idSemPacote] = idBarrilProtetor;
+                    ativarVisualProtecaoBarril(idSemPacote, idBarrilProtetor);
+                }
                 modoProtecaoBarrilInimigo = false; idBarrilProtetor = null;
                 return narrar(protegerASiMesmo ? "❌ O Barril não pode proteger a si mesmo! Escolha outra carta." : `🛡️ Vínculo criado! O Barril inimigo agora protegerá este token!`);
             }
@@ -853,6 +1800,7 @@ function invocarTokenPeloNomeSemHabilidade(nomeCarta, idCampo) {
     pacoteNovo.querySelector(".nome-carta").innerText += " (S/Hab)";
 
     if (typeof atualizarTodosUnidoes === "function") atualizarTodosUnidoes();
+    return pacoteNovo;
 }
 
 // 🩹 CORREÇÃO: depois do Bruxo roubar uma carta, ela só era MOVIDA de lado (appendChild),
@@ -889,6 +1837,8 @@ function converterCartaRoubada(idUnico, novoDonoEhJ1) {
     // Faz a carta "entrar em modo de batalha" de verdade (ataque, traição, etc já funcionando)
     if (novoDonoEhJ1) jogarCarta("pacote-" + idUnico);
     else jogarCartaInimigo("pacote-" + idUnico);
+
+    return novoElemento;
 }
 
 // 🔥 Cura TODAS as tropas de um lado — campo e mão — ignorando suportes/poções.
@@ -1023,6 +1973,7 @@ imagem.onclick = function() {
             let oBruxoEAliado = document.getElementById("pacote-" + idBruxoAtivo).closest("#campo-j1") !== null;
             let maoDoDonoDoBruxo = oBruxoEAliado ? "mao-j1" : "mao-j2";
 
+            animarPocaoBruxo(idBruxoAtivo, idDoPacote.replace("pacote-", ""), "transformar");
             pacoteAlvo.remove(); // Remove a carta inimiga do campo
             
             // Cria a poção na mão de quem usou o Bruxo (tamanho correto)
@@ -1051,9 +2002,12 @@ imagem.onclick = function() {
             let maoDoDonoDoBruxo = oBruxoEAliado ? "mao-j1" : "mao-j2";
 
             // 1. ROUBA A CARTA: reconstrói no campo de quem usou o Bruxo, já 100% do novo dono
-            converterCartaRoubada(idDoPacote.replace("pacote-", ""), oBruxoEAliado);
+            let origemRouboBruxo = animarPocaoBruxo(idBruxoAtivo, idDoPacote.replace("pacote-", ""), "roubar");
+            let cartaRoubadaBruxo = converterCartaRoubada(idDoPacote.replace("pacote-", ""), oBruxoEAliado);
+            animarCartaRoubadaBruxo(cartaRoubadaBruxo, origemRouboBruxo);
             
             // 2. O BRUXO VIRA POÇÃO: Remove o Bruxo do campo
+            animarBruxoVirandoPocao(idBruxoAtivo);
             pacoteBruxo.remove(); 
             
             // 3. Cria a poção na mão de quem usou o Bruxo (tamanho correto)
@@ -1070,6 +2024,7 @@ imagem.onclick = function() {
                 narrar("❌ O Barril não pode proteger a si mesmo! Escolha outra carta.");
             } else {
                 cartasProtegidas[idSemPacote] = idBarrilProtetor; // idSemPacote já está sem o "pacote-"
+                ativarVisualProtecaoBarril(idSemPacote, idBarrilProtetor);
                 narrar("🛡️ Vínculo criado! O Barril agora dará a vida para proteger esta carta!");
             }
             modoProtecaoBarril = false; 
@@ -1265,6 +2220,7 @@ function jogarCartaInimigo(idDoPacote, somentePrepararCampo = false) {
             let oBruxoEAliado = document.getElementById("pacote-" + idBruxoAtivo).closest("#campo-j1") !== null;
             let maoDoDonoDoBruxo = oBruxoEAliado ? "mao-j1" : "mao-j2";
 
+            animarPocaoBruxo(idBruxoAtivo, idDoPacote.replace("pacote-", ""), "transformar");
             pacoteAlvo.remove(); 
             gerarPocaoAleatoria(maoDoDonoDoBruxo); 
             
@@ -1285,7 +2241,10 @@ function jogarCartaInimigo(idDoPacote, somentePrepararCampo = false) {
             let campoDoDonoDoBruxo = oBruxoEAliado ? document.getElementById("campo-j1") : document.getElementById("campo-j2");
             let maoDoDonoDoBruxo = oBruxoEAliado ? "mao-j1" : "mao-j2";
 
-            converterCartaRoubada(idDoPacote.replace("pacote-", ""), oBruxoEAliado); // rouba a carta, já 100% do novo dono
+            let origemRouboBruxo = animarPocaoBruxo(idBruxoAtivo, idDoPacote.replace("pacote-", ""), "roubar");
+            let cartaRoubadaBruxo = converterCartaRoubada(idDoPacote.replace("pacote-", ""), oBruxoEAliado); // rouba a carta, já 100% do novo dono
+            animarCartaRoubadaBruxo(cartaRoubadaBruxo, origemRouboBruxo);
+            animarBruxoVirandoPocao(idBruxoAtivo);
             pacoteBruxo.remove(); // Some com o bruxo
             gerarPocaoAleatoria(maoDoDonoDoBruxo); // Manda poção pra mão de quem roubou
 
@@ -1296,7 +2255,10 @@ function jogarCartaInimigo(idDoPacote, somentePrepararCampo = false) {
         }
         else if (typeof modoProtecaoBarrilInimigo !== 'undefined' && modoProtecaoBarrilInimigo === true) {
         let protegerASiMesmo = (idSemPacote === idBarrilProtetor);
-        if (!protegerASiMesmo) cartasProtegidas[idSemPacote] = idBarrilProtetor;
+        if (!protegerASiMesmo) {
+            cartasProtegidas[idSemPacote] = idBarrilProtetor;
+            ativarVisualProtecaoBarril(idSemPacote, idBarrilProtetor);
+        }
         modoProtecaoBarrilInimigo = false; 
         idBarrilProtetor = null;
         return narrar(protegerASiMesmo ? "❌ O Barril não pode proteger a si mesmo! Escolha outra carta." : `🛡️ Vínculo criado! O Barril inimigo agora protegerá esta carta!`);
@@ -1375,6 +2337,7 @@ function criarHTMLCarta(carta, funcaoJogar, classeCss, ehAliado) {
 }
 
 function iniciarAtaque(nomeCarta, idUnico) {
+    if (barrilBarbaroEmAnimacao) return narrar("🪵 O Barril de Bárbaro ainda está rolando!");
     nomeCarta = obterNomeEfetivoCarta(idUnico, nomeCarta);
     modoAlvoBarril = false; // 🚀 Cancela qualquer mira do barril se clicar noutro ataque
 
@@ -1473,7 +2436,12 @@ function iniciarAtaque(nomeCarta, idUnico) {
                 // 🩹 CORREÇÃO: os dois caminhos tinham o dano fixo em 4 e 2, ignorando o dano
                 // ATUAL do Goblin (que muda com Besta/Auvex/Allsforms etc.). Agora usa danoBase.
                 if (escolha) { danoPreparado = danoBase * 2; goblinAtaquesGanhos[idUnico] = false; narrar(`🎲 O ${nomeTexto} concentrou força! Causará ${danoPreparado} de dano num golpe único e passará a vez!`); } 
-                else { goblinAtaquesGanhos[idUnico] = true; danoPreparado = danoBase; narrar(`🎲 O ${nomeTexto} ativou a agilidade! Dará ${danoPreparado} de dano agora e terá direito a mais um ataque!`); }
+                else {
+                    goblinAtaquesGanhos[idUnico] = true;
+                    danoPreparado = danoBase;
+                    ativarEfeitoVelocidade(idUnico);
+                    narrar(`🎲 O ${nomeTexto} ativou a agilidade! Dará ${danoPreparado} de dano agora e terá direito a mais um ataque!`);
+                }
             } else { goblinAtaquesGanhos[idUnico] = false; narrar(`🎲 O ${nomeTexto} tirou ${dado}. Apenas um ataque normal de ${danoPreparado} de dano.`); }
         }
     }
@@ -1487,7 +2455,6 @@ function iniciarAtaque(nomeCarta, idUnico) {
 
     if (nomeCarta === 'Mensageiro' && typeof mensageirosEmArea !== 'undefined' && mensageirosEmArea[idUnico]) {
         narrar(`🌪️ O Mensageiro disparou em ÁREA! Causando 2 de dano a TODOS os inimigos!`);
-        animarOndaDeVento(idUnico, inimigosNoCampo.map(pacote => pacote.id));
         inimigosNoCampo.forEach(pacoteInimigo => aplicarDanoAtaqueArea(pacoteInimigo.id, 2, false));
         passarTurno();
         if (typeof atualizarTodosUnidoes === "function") atualizarTodosUnidoes();
@@ -1540,10 +2507,10 @@ function receberAtaque(idVidaAlvo, idPacoteAlvo) {
         }
 
         // 🛡️ BLOQUEIO DO GUERREIRO
-        if (escudoGuerreiro[idPuro]) {
-            mostrarImpactoVfx(idPuro, "escudo");
+        if (escudoGuerreiro[idPuro] && Number(danoPreparado) > 0) {
             narrar(`🛡️ BLANG! O escudo da carta inimiga bloqueou o ataque e QUEBROU!`);
-            delete escudoGuerreiro[idPuro]; 
+            delete escudoGuerreiro[idPuro];
+            quebrarVisualEscudo(idPuro);
             modoAtaque = false; 
             danoPreparado = 0; 
             passarTurno(); 
@@ -1551,11 +2518,6 @@ function receberAtaque(idVidaAlvo, idPacoteAlvo) {
         }
 
         let textoVida = document.getElementById(idVidaAlvo);
-        let nomeAtacanteVisual = obterNomeEfetivoCarta(
-            ultimoIdQueAtacou,
-            ultimaCartaJogador ? ultimaCartaJogador.nome : ""
-        );
-        animarAtaqueTematico(nomeAtacanteVisual, ultimoIdQueAtacou, idPuro);
         // 🩹 CORREÇÃO: era parseInt, que truncava vida fracionária (ex: 0.75 virava 0) — o jogo
         // tem cartas com valores quebrados (Barril de Goblin, fogo do Bumerskeleton -0.25...),
         // e isso fazia o cálculo do dano sair errado ao atacar essas cartas.
@@ -1584,6 +2546,7 @@ function receberAtaque(idVidaAlvo, idPacoteAlvo) {
 
             narrar("BUM! O alvo inimigo foi DESTRUÍDO!");
             registrarMorte(nomeDestaCarta, "j2");
+            guardarOrigemTransformacaoOrk(nomeDestaCarta, idPuro, pacoteAlvo);
             pacoteAlvo.remove();
 
             ativarPassivasAoMorrer(
@@ -1645,6 +2608,7 @@ function receberAtaque(idVidaAlvo, idPacoteAlvo) {
 }
 
 function inimigoAtacar(idUnico) {
+    if (barrilBarbaroEmAnimacao) return;
     modoAlvoBarril = false;        // 🚀 Desbloqueia o ataque normal do oponente
     modoAlvoBarrilInimigo = false;
 
@@ -1743,7 +2707,12 @@ function inimigoAtacar(idUnico) {
                 // 🩹 CORREÇÃO: mesmo problema do lado do jogador — dano fixo em 4 e 2, ignorando
                 // o dano ATUAL do Goblin (que muda com Besta/Auvex/Allsforms etc.).
                 if (qtdAliados === 1) { danoInimigoPreparado = danoLido * 2; goblinAtaquesGanhos[idUnico] = false; narrar(`🎲 O ${nomeTexto} tirou 2 e concentrou ${danoInimigoPreparado} de dano brutal!`); } 
-                else { goblinAtaquesGanhos[idUnico] = true; danoInimigoPreparado = danoLido; narrar(`🎲 O ${nomeTexto} tirou 2! Atacará com ${danoInimigoPreparado} de dano e fará mais um ataque!`); }
+                else {
+                    goblinAtaquesGanhos[idUnico] = true;
+                    danoInimigoPreparado = danoLido;
+                    ativarEfeitoVelocidade(idUnico);
+                    narrar(`🎲 O ${nomeTexto} tirou 2! Atacará com ${danoInimigoPreparado} de dano e fará mais um ataque!`);
+                }
             } else { goblinAtaquesGanhos[idUnico] = false; narrar(`🎲 O ${nomeTexto} tirou ${dado}. Ataque normal.`); }
         }
     }
@@ -1757,7 +2726,6 @@ function inimigoAtacar(idUnico) {
     
     if (nomeCartaInimiga === 'Mensageiro' && typeof mensageirosEmArea !== 'undefined' && mensageirosEmArea[idUnico]) {
         narrar(`🌪️ O Mensageiro Inimigo disparou em ÁREA! Causando 2 de dano a TODAS as suas cartas!`);
-        animarOndaDeVento(idUnico, aliadosNoCampo.map(pacote => pacote.id));
         aliadosNoCampo.forEach(pacoteAliado => aplicarDanoAtaqueArea(pacoteAliado.id, 2, true));
         passarTurno();
         if (typeof atualizarTodosUnidoes === "function") atualizarTodosUnidoes();
@@ -1811,10 +2779,10 @@ function aplicarDanoInimigo(idPacoteAlvo) {
     }
 
     // 🛡️ BLOQUEIO DO GUERREIRO
-    if (escudoGuerreiro[idPuro]) {
-        mostrarImpactoVfx(idPuro, "escudo");
+    if (escudoGuerreiro[idPuro] && Number(danoInimigoPreparado) > 0) {
         narrar(`🛡️ BLANG! Sua carta defendeu o ataque inimigo, mas o escudo QUEBROU!`);
-        delete escudoGuerreiro[idPuro]; 
+        delete escudoGuerreiro[idPuro];
+        quebrarVisualEscudo(idPuro);
         modoAtaqueInimigo = false; 
         danoInimigoPreparado = 0;
         passarTurno(); 
@@ -1823,11 +2791,6 @@ function aplicarDanoInimigo(idPacoteAlvo) {
 
     let idVida = idPacoteAlvo.replace("pacote-", "vida-");
     let textoVida = document.getElementById(idVida);
-    let nomeAtacanteVisual = obterNomeEfetivoCarta(
-        ultimoIdQueAtacou,
-        ultimaCartaOponente ? ultimaCartaOponente.nome : ""
-    );
-    animarAtaqueTematico(nomeAtacanteVisual, ultimoIdQueAtacou, idPuro);
     // 🩹 CORREÇÃO: nunca deixa a vida mostrar número negativo — trava em 0.
     let vidaAtual = Math.max(0, parseFloat(textoVida.innerText) - danoInimigoPreparado);
     textoVida.innerText = vidaAtual;
@@ -1852,6 +2815,7 @@ function aplicarDanoInimigo(idPacoteAlvo) {
 
         narrar("Sua carta foi DESTRUÍDA pelo oponente!");
         registrarMorte(nomeDestaCarta, "j1");
+        guardarOrigemTransformacaoOrk(nomeDestaCarta, idPuro, pacoteAlvo);
         pacoteAlvo.remove();
 
         ativarPassivasAoMorrer(
@@ -2064,19 +3028,24 @@ function ativarPassivasAoMorrer(nomeCarta, idUnico, campoDestino, mensagemOrk, m
     if (nomeCarta === "Ork") {
         let qtd = (typeof orkBuffado !== "undefined" && orkBuffado[idUnico]) ? 3 : 2;
         narrar(mensagemOrk || `💀 PASSIVA: O Ork morreu e invocou ${qtd} Goblins!`);
-        for (let i = 0; i < qtd; i++) invocarToken("goblin", campoDestino);
+        let goblinsInvocados = [];
+        for (let i = 0; i < qtd; i++) {
+            goblinsInvocados.push(invocarToken("goblin", campoDestino));
+        }
+        animarTransformacaoOrk(idUnico, goblinsInvocados);
     }
 
     if (typeof processarMortePassivaBarril === "function") {
-        processarMortePassivaBarril(nomeCarta, campoDestino, mensagemBarril || "O Barril foi destruído!");
+        processarMortePassivaBarril(nomeCarta, idUnico, campoDestino, mensagemBarril || "O Barril foi destruído!");
     }
 }
 
 function aplicarDanoAtaqueArea(idPacoteAlvo, dano, isInimigo) {
     let idPuro = idPacoteAlvo.replace("pacote-", "");
-    if (typeof escudoGuerreiro !== 'undefined' && escudoGuerreiro[idPuro]) {
+    if (typeof escudoGuerreiro !== 'undefined' && escudoGuerreiro[idPuro] && Number(dano) > 0) {
         narrar(`🛡️ BLANG! O escudo de uma das cartas bloqueou o golpe da área e QUEBROU!`);
         delete escudoGuerreiro[idPuro];
+        quebrarVisualEscudo(idPuro);
         return;
     }
     aplicarDanoDireto(idPacoteAlvo, dano, isInimigo);
@@ -2117,7 +3086,13 @@ function iniciarAtaqueIncendiario(idIncendiario, isInimigo) {
 // quanto a cada passagem de turno (fases seguintes).
 function executarFaseIncendiario(idIncendiario, fase) {
     let pacoteInc = document.getElementById("pacote-" + idIncendiario);
-    if (!pacoteInc) { delete incendiarioCiclo[idIncendiario]; delete incendiarioAlvos[idIncendiario]; return; }
+    if (!pacoteInc) {
+        delete incendiarioCiclo[idIncendiario];
+        delete incendiarioAlvos[idIncendiario];
+        delete incendiarioFasesVisuais[idIncendiario];
+        sincronizarVisuaisIncendiario();
+        return;
+    }
 
     let ladoInc = pacoteInc.closest("#campo-j1") ? "j1" : "j2";
     let ladoInimigo = ladoInc === "j1" ? "j2" : "j1";
@@ -2129,14 +3104,18 @@ function executarFaseIncendiario(idIncendiario, fase) {
         let campoInimigo = document.getElementById("campo-" + ladoInimigo);
         let inimigos = campoInimigo ? Array.from(campoInimigo.getElementsByClassName(classeInimiga)).map(p => p.id) : [];
         incendiarioAlvos[idIncendiario] = inimigos;
-        inimigos.forEach(idAlvo => marcarPolvoraCarta(idAlvo));
+        incendiarioFasesVisuais[idIncendiario] = 1;
+        sincronizarVisuaisIncendiario();
+        animarSalpicoPolvoraIncendiario(idIncendiario, inimigos);
         if (inimigos.length > 0) narrar(`🔥 ${rotuloInc} jogou pólvora em todas as cartas inimigas da arena!`);
     } else if (fase === 2 || fase === 3) {
         let alvos = incendiarioAlvos[idIncendiario] || [];
         let algumAtingido = false;
+        incendiarioFasesVisuais[idIncendiario] = fase;
+        sincronizarVisuaisIncendiario();
         alvos.forEach(idAlvo => {
             if (document.getElementById(idAlvo)) {
-                ativarFogoCarta(idAlvo, 0, true);
+                animarFogoIncendiario(idAlvo, fase === 2);
                 aplicarDanoDireto(idAlvo, 1, ladoInimigo === "j2");
                 algumAtingido = true;
             }
@@ -2146,27 +3125,43 @@ function executarFaseIncendiario(idIncendiario, fase) {
                 ? `🔥 ${rotuloInc} acendeu a pólvora! 1 de dano em cada carta atingida.`
                 : `🔥 A pólvora do ${rotuloInc} continua queimando! Mais 1 de dano em cada carta atingida.`);
         }
-        if (fase === 3) {
-            setTimeout(() => alvos.forEach(desativarFogoCarta), 1500);
-        }
     } else if (fase === 4) {
-        (incendiarioAlvos[idIncendiario] || []).forEach(desativarFogoCarta);
+        incendiarioFasesVisuais[idIncendiario] = 4;
+        sincronizarVisuaisIncendiario();
     }
     // fase 4: parado, não faz nada — só espera o ciclo reiniciar.
 
     if (typeof atualizarTodosUnidoes === "function") atualizarTodosUnidoes();
+    sincronizarVisuaisIncendiario();
 }
 
-function processarMortePassivaBarril(nomeDestaCarta, campoDestino, mensagemBase) {
+function processarMortePassivaBarril(nomeDestaCarta, idBarrilDestruido, campoDestino, mensagemBase) {
     if (nomeDestaCarta !== "Barril") return;
 
     let dadoBarril = Math.floor(Math.random() * 6) + 1;
+    let cartaDaPassiva = dadoBarril === 3
+        ? "Barril de Goblin"
+        : (dadoBarril === 5 ? "Barril de Bárbaro" : null);
+
+    // O Barril fosco quebra sobre todas as cartas que ele protegia. O vínculo é removido
+    // imediatamente, mas o visual permanece tempo suficiente para as lascas aparecerem.
+    Object.keys(cartasProtegidas).forEach(idProtegido => {
+        if (String(cartasProtegidas[idProtegido]) !== String(idBarrilDestruido)) return;
+        quebrarVisualProtecaoBarril(idProtegido, !!cartaDaPassiva);
+        delete cartasProtegidas[idProtegido];
+    });
+
     narrar(`💥 ${mensagemBase} Rolando dado da passiva: 🎲 ${dadoBarril}`);
 
-    if (dadoBarril === 3) {
-        setTimeout(() => { narrar("📦 Um Barril de Goblins (Sem Hab.) surgiu dos destroços!"); invocarTokenPeloNomeSemHabilidade("Barril de Goblin", campoDestino); }, 1500);
-    } else if (dadoBarril === 5) {
-        setTimeout(() => { narrar("🪵 Um Barril de Bárbaro (Sem Hab.) surgiu dos destroços!"); invocarTokenPeloNomeSemHabilidade("Barril de Bárbaro", campoDestino); }, 1500);
+    if (cartaDaPassiva) {
+        setTimeout(() => {
+            let mensagem = cartaDaPassiva === "Barril de Goblin"
+                ? "📦 Um Barril de Goblins (Sem Hab.) surgiu dos destroços!"
+                : "🪵 Um Barril de Bárbaro (Sem Hab.) surgiu dos destroços!";
+            narrar(mensagem);
+            let cartaLibertada = invocarTokenPeloNomeSemHabilidade(cartaDaPassiva, campoDestino);
+            animarCartaSaindoDoBarril(cartaLibertada);
+        }, 1500);
     } else {
         setTimeout(() => narrar("O Barril virou apenas lascas de madeira."), 1500);
     }
@@ -2240,6 +3235,7 @@ function aplicarDanoDireto(idPacoteAlvo, dano, isInimigo) {
         // ele pra decidir o lado dos Goblins invocados dava resultado errado às vezes.
         let campoDestino = pacote.closest("#campo-j2") ? "campo-j2" : "campo-j1";
         registrarMorte(nomeDestaCarta, campoDestino === "campo-j2" ? "j2" : "j1");
+        guardarOrigemTransformacaoOrk(nomeDestaCarta, idPuro, pacote);
         pacote.remove();
         
         ativarPassivasAoMorrer(nomeDestaCarta, idPuro, campoDestino);
@@ -2281,9 +3277,10 @@ function aplicarAlvoCavaleiro(idPacoteAlvo) {
     let vizinhos = obterCartasAdjacentes(idPacoteAlvo);
     let { danoArea, alvosMaximos } = _calcularAtaqueCavaleiro(idCavaleiroAtivo, vizinhos);
     let alvos = [pacoteAlvo, ...vizinhos].slice(0, alvosMaximos);
+    let especialAtivo = typeof cavaleiroAtivado !== "undefined" && !!cavaleiroAtivado[idCavaleiroAtivo];
 
     narrar(`⚔️ O Cavaleiro das Trevas focou ${alvos.length} inimigo(s) (alvo + vizinhos) causando ${danoArea} de dano em cada!`);
-    animarGolpeSombrio(idCavaleiroAtivo, alvos.map(pacote => pacote.id));
+    animarAtaqueAreaCavaleiro(idCavaleiroAtivo, pacoteAlvo, alvos, especialAtivo);
     alvos.forEach(pacote => aplicarDanoAtaqueArea(pacote.id, danoArea, false));
 
     modoAlvoCavaleiro = false;
@@ -2299,9 +3296,10 @@ function aplicarAlvoCavaleiroInimigo(idPacoteAlvo) {
     let vizinhos = obterCartasAdjacentes(idPacoteAlvo);
     let { danoArea, alvosMaximos } = _calcularAtaqueCavaleiro(idCavaleiroAtivo, vizinhos);
     let alvos = [pacoteAlvo, ...vizinhos].slice(0, alvosMaximos);
+    let especialAtivo = typeof cavaleiroAtivado !== "undefined" && !!cavaleiroAtivado[idCavaleiroAtivo];
 
     narrar(`⚔️ O Cavaleiro das Trevas inimigo focou ${alvos.length} de suas cartas (alvo + vizinhos) causando ${danoArea} de dano em cada!`);
-    animarGolpeSombrio(idCavaleiroAtivo, alvos.map(pacote => pacote.id));
+    animarAtaqueAreaCavaleiro(idCavaleiroAtivo, pacoteAlvo, alvos, especialAtivo);
     alvos.forEach(pacote => aplicarDanoAtaqueArea(pacote.id, danoArea, true));
 
     modoAlvoCavaleiroInimigo = false;
@@ -2310,6 +3308,102 @@ function aplicarAlvoCavaleiroInimigo(idPacoteAlvo) {
     if (typeof atualizarTodosUnidoes === "function") atualizarTodosUnidoes();
 }
 
+
+// ✨ Efeito do Ícaro: uma centelha de imaginação viaja até a carta escolhida.
+// O efeito usa coordenadas fixas, então continua visível mesmo enquanto a carta antiga
+// é substituída pela nova identidade.
+function animarPoderCriacaoIcaro(idOrigem, pacoteAlvo) {
+    if (!pacoteAlvo) return;
+
+    let origem = document.getElementById("pacote-" + idOrigem);
+    let rectOrigem = (origem || pacoteAlvo).getBoundingClientRect();
+    let rectAlvo = pacoteAlvo.getBoundingClientRect();
+    let inicioX = rectOrigem.left + rectOrigem.width / 2;
+    let inicioY = rectOrigem.top + rectOrigem.height / 2;
+    let fimX = rectAlvo.left + rectAlvo.width / 2;
+    let fimY = rectAlvo.top + rectAlvo.height / 2;
+    let mesmoAlvo = origem === pacoteAlvo;
+
+    let energia = document.createElement("div");
+    energia.className = "energia-criacao-icaro" + (mesmoAlvo ? " energia-criacao-propria" : "");
+    energia.style.setProperty("--icaro-inicio-x", inicioX + "px");
+    energia.style.setProperty("--icaro-inicio-y", inicioY + "px");
+    energia.style.setProperty("--icaro-meio-x", ((inicioX + fimX) / 2 + (mesmoAlvo ? 52 : 0)) + "px");
+    energia.style.setProperty("--icaro-meio-y", (Math.min(inicioY, fimY) - (mesmoAlvo ? 72 : 48)) + "px");
+    energia.style.setProperty("--icaro-fim-x", fimX + "px");
+    energia.style.setProperty("--icaro-fim-y", fimY + "px");
+    energia.innerHTML = '<span class="nucleo-imaginacao">✦</span><i>✧</i><i>◌</i><i>✦</i>';
+    document.body.appendChild(energia);
+
+    if (origem) origem.classList.add("icaro-imaginando");
+    pacoteAlvo.classList.add("alvo-imaginado-icaro");
+    setTimeout(() => {
+        energia.remove();
+        if (origem && origem.isConnected) origem.classList.remove("icaro-imaginando");
+        if (pacoteAlvo.isConnected) pacoteAlvo.classList.remove("alvo-imaginado-icaro");
+    }, 1050);
+}
+
+// A nova carta aparece como um rascunho e ganha cor enquanto os traços se completam.
+function animarRevelacaoIcaro(pacoteNovo) {
+    if (!pacoteNovo) return;
+
+    pacoteNovo.classList.add("carta-criada-por-icaro");
+    let rascunho = document.createElement("div");
+    rascunho.className = "rascunho-criacao-icaro";
+    rascunho.innerHTML = '<span class="ideia-criacao">✦</span><i></i><i></i><i></i><i></i>';
+    pacoteNovo.appendChild(rascunho);
+
+    setTimeout(() => {
+        rascunho.remove();
+        if (pacoteNovo.isConnected) pacoteNovo.classList.remove("carta-criada-por-icaro");
+    }, 1350);
+}
+
+// ✏️ Efeito do Thiago: o lápis vai exatamente ao atributo alterado. Para reduzir,
+// a borracha passa pelo valor; para aumentar, o lápis redesenha e deixa um +1.
+function animarAjusteThiago(idOrigem, idAlvo, atributo, aumentar) {
+    let origem = document.getElementById("pacote-" + idOrigem);
+    let pacoteAlvo = document.getElementById("pacote-" + idAlvo);
+    let atributoEl = document.getElementById(atributo + "-" + idAlvo);
+    if (!pacoteAlvo || !atributoEl) return;
+
+    let rectOrigem = (origem || pacoteAlvo).getBoundingClientRect();
+    let rectAtributo = atributoEl.getBoundingClientRect();
+    let inicioX = rectOrigem.left + rectOrigem.width / 2;
+    let inicioY = rectOrigem.top + rectOrigem.height / 2;
+    let fimX = rectAtributo.left + rectAtributo.width / 2;
+    let fimY = rectAtributo.top + rectAtributo.height / 2;
+    let tipo = aumentar ? "desenhando" : "apagando";
+
+    let lapis = document.createElement("div");
+    lapis.className = "lapis-ajuste-thiago lapis-thiago-" + tipo;
+    lapis.style.setProperty("--thiago-inicio-x", inicioX + "px");
+    lapis.style.setProperty("--thiago-inicio-y", inicioY + "px");
+    lapis.style.setProperty("--thiago-fim-x", fimX + "px");
+    lapis.style.setProperty("--thiago-fim-y", fimY + "px");
+    lapis.innerHTML = '<span>✏️</span>';
+
+    let marca = document.createElement("div");
+    marca.className = "marca-ajuste-thiago marca-thiago-" + tipo;
+    marca.style.left = fimX + "px";
+    marca.style.top = fimY + "px";
+    marca.innerHTML = aumentar
+        ? '<i class="traco-lapis-thiago"></i><b>+1</b>'
+        : '<i class="po-borracha"></i><i class="po-borracha"></i><i class="po-borracha"></i><b>−1</b>';
+
+    document.body.appendChild(lapis);
+    document.body.appendChild(marca);
+    if (origem) origem.classList.add("thiago-editando");
+    pacoteAlvo.classList.add("alvo-edicao-thiago");
+
+    setTimeout(() => {
+        lapis.remove();
+        marca.remove();
+        if (origem && origem.isConnected) origem.classList.remove("thiago-editando");
+        if (pacoteAlvo.isConnected) pacoteAlvo.classList.remove("alvo-edicao-thiago");
+    }, 1250);
+}
 
 // 🎨 ÍCARO — transforma a carta clicada em outra TROPA sorteada aleatoriamente (nunca em
 // suporte/poção, nunca no próprio "Criador"), mantendo a vida e o dano atuais dela.
@@ -2332,6 +3426,8 @@ function aplicarTransformacaoIcaro(idPacoteAlvo) {
     let estavaCongelada = pacoteAlvo.classList.contains("congelada");
     let ehAliado = pacoteAlvo.closest("#campo-j1") !== null;
 
+    animarPoderCriacaoIcaro(idIcaroAtivo, pacoteAlvo);
+
     let cartaObj = { nome: novaCartaInfo.nome, idUnico: idUnico, img: novaCartaInfo.img, vida: vidaAtual, dano: danoAtual };
     let classeCss = ehAliado ? "carta-aliada" : "carta-inimiga";
     let funcaoJogar = ehAliado ? "jogarCarta" : "jogarCartaInimigo";
@@ -2351,6 +3447,9 @@ function aplicarTransformacaoIcaro(idPacoteAlvo) {
     // "Liga" a carta de verdade — ataque, habilidade, tudo já funcionando com a nova identidade.
     if (ehAliado) jogarCarta("pacote-" + idUnico);
     else jogarCartaInimigo("pacote-" + idUnico);
+
+    // As funções acima podem reposicionar a carta; busca novamente o elemento definitivo.
+    animarRevelacaoIcaro(document.getElementById("pacote-" + idUnico));
 
     narrar(`🎨 ÍCARO transformou ${nomeAntigo} em ${novaCartaInfo.nome}! Vida (${vidaAtual}) e dano (${danoAtual}) continuam os mesmos — e agora ela tem a passiva e a Habilidade de ${novaCartaInfo.nome}.`);
 
@@ -2380,6 +3479,9 @@ function aplicarAjusteThiago(idPacoteAlvo) {
     }
 
     let isInimigo = pacoteAlvo.closest("#campo-j2") !== null;
+
+    // Registra as posições antes do ajuste, pois diminuir a vida pode eliminar a carta.
+    animarAjusteThiago(idThiagoAtivo, idPuro, ajustarVida ? "vida" : "dano", aumentar);
 
     if (ajustarVida) {
         // Reaproveita aplicarDanoDireto: dano negativo cura (+1 vida), dano positivo tira 1 de vida.
@@ -2470,6 +3572,79 @@ function obterSeparadaoDivididoAtivo(idAtacante) {
 }
 
 
+// Cria o relógio usado pelos dois efeitos do Viajante. Os ponteiros são elementos
+// separados para poderem girar ao contrário ou parar de repente no especial.
+function criarRelogioDoViajante(classeExtra) {
+    let relogio = document.createElement("div");
+    relogio.className = "relogio-do-viajante " + (classeExtra || "");
+    relogio.innerHTML = `
+        <span class="marca-tempo marca-tempo-12"></span>
+        <span class="marca-tempo marca-tempo-3"></span>
+        <span class="marca-tempo marca-tempo-6"></span>
+        <span class="marca-tempo marca-tempo-9"></span>
+        <i class="ponteiro-tempo ponteiro-hora"></i>
+        <i class="ponteiro-tempo ponteiro-minuto"></i>
+        <b class="pino-relogio-temporal"></b>
+    `;
+    return relogio;
+}
+
+// Passiva: o relógio aparece sobre o próprio Viajante e gira ao contrário, como
+// se ele estivesse rebobinando a rodada do time inteiro.
+function animarVoltaNoTempo(idViajante) {
+    let pacote = document.getElementById("pacote-" + idViajante);
+    if (!pacote) return;
+
+    let rect = pacote.getBoundingClientRect();
+    let efeito = document.createElement("div");
+    efeito.className = "efeito-volta-no-tempo";
+    efeito.style.left = (rect.left + rect.width / 2) + "px";
+    efeito.style.top = (rect.top + Math.min(58, rect.height * 0.28)) + "px";
+    efeito.innerHTML = '<i class="anel-temporal"></i><i class="anel-temporal"></i>';
+    efeito.appendChild(criarRelogioDoViajante("relogio-rebobinando"));
+    document.body.appendChild(efeito);
+
+    pacote.classList.add("viajante-rebobinando-tempo");
+    setTimeout(() => {
+        efeito.remove();
+        if (pacote.isConnected) pacote.classList.remove("viajante-rebobinando-tempo");
+    }, 1750);
+}
+
+// Especial: a carta verdadeira sai da batalha na mesma hora, preservando a regra do jogo.
+// Um eco visual sem IDs fica por alguns instantes, preso dentro do relógio, até desaparecer.
+function animarCartaPresaNoTempo(pacoteAlvo) {
+    if (!pacoteAlvo) return;
+
+    let rect = pacoteAlvo.getBoundingClientRect();
+    let eco = pacoteAlvo.cloneNode(true);
+    eco.removeAttribute("id");
+    eco.querySelectorAll("[id]").forEach(el => el.removeAttribute("id"));
+    eco.querySelectorAll("button").forEach(botao => {
+        botao.disabled = true;
+        botao.removeAttribute("onclick");
+    });
+    eco.classList.add("eco-carta-presa-no-tempo");
+    eco.style.left = rect.left + "px";
+    eco.style.top = rect.top + "px";
+    eco.style.width = rect.width + "px";
+    eco.style.height = rect.height + "px";
+    eco.style.margin = "0";
+    eco.appendChild(criarRelogioDoViajante("relogio-prendendo-tempo"));
+
+    let distorcao = document.createElement("div");
+    distorcao.className = "distorcao-prisao-temporal";
+    distorcao.style.left = (rect.left + rect.width / 2) + "px";
+    distorcao.style.top = (rect.top + rect.height / 2) + "px";
+
+    document.body.appendChild(eco);
+    document.body.appendChild(distorcao);
+    setTimeout(() => {
+        eco.remove();
+        distorcao.remove();
+    }, 1850);
+}
+
 // ⏳ VIAJANTE DO TEMPO — Passiva (uso único): reseta TODAS as habilidades/passivas de uso
 // único já gastas nas duas mesas (o botão "Especial" reaparece pra quem já usou), sem
 // mexer em vida, dano ou posição de nenhuma carta.
@@ -2480,6 +3655,8 @@ function usarPassivaViajante(idUnico, botaoClicado) {
 
     let pacoteViajante = document.getElementById("pacote-" + idUnico);
     let lado = (pacoteViajante && pacoteViajante.closest("#campo-j1")) ? "j1" : "j2";
+
+    animarVoltaNoTempo(idUnico);
 
     let campo = document.getElementById("campo-" + lado);
     if (campo) {
@@ -2511,6 +3688,7 @@ function aplicarPrenderNoTempo(idPacoteAlvo) {
     let idPuro = idPacoteAlvo.replace("pacote-", "");
     let nomeAlvo = pacoteClicado.querySelector(".nome-carta").innerText.trim();
 
+    animarCartaPresaNoTempo(pacoteClicado);
     pacoteClicado.remove(); // ela desaparece da batalha — presa em outro momento do tempo
 
     narrar(`⏳ ${nomeAlvo} ficou PRESA em um momento do tempo e SUMIU da batalha!`);
@@ -2549,9 +3727,9 @@ function aplicarAlvoBarril(idPacoteAlvo, viaEspecial) {
     let idAlvoPuro = idPacoteAlvo.replace("pacote-", "");
     
     alvosDoBarril[idBarrilPuro] = idAlvoPuro; 
+    animarLancamentoBarrilGoblin(idBarrilPuro, idAlvoPuro);
 
     narrar(`🎯 Os Goblins do Barril focaram-se em [${nomeAlvo}]!`);
-    animarGoblinsDoBarril(idBarrilPuro, idAlvoPuro, true);
 
     // LÊ O DANO EXTRA (BUFFS DA BESTA, UNIDÃO, ETC)
     let txtDanoBarril = document.getElementById("dano-" + idBarrilPuro);
@@ -2622,9 +3800,9 @@ function equiparSuporte(idAlvo) {
         }
 
         escudoGuerreiro[idAlvo] = true; // reaproveita o mesmo mecanismo de bloqueio do Guerreiro
+        ativarVisualEscudo(idAlvo);
 
         itemNaMaoEscudo.remove();
-        mostrarEfeitoAtaque(idAlvo);
 
         narrar(`🛡️ [${nomeAlvo}] recebeu um Escudo! Ela vai ignorar completamente o próximo ataque que sofrer.`);
         suportePreparado = null;
@@ -2692,6 +3870,7 @@ function equiparSuporte(idAlvo) {
         }
 
         pocaoVeluxAtiva[idAlvo] = true;
+        ativarEfeitoVelocidade(idAlvo);
         
         itemNaMaoVelux.remove();
         
@@ -2923,7 +4102,6 @@ function reviverCartaDoCemiterio(lado, index, idItem, ehAliado) {
     let htmlDaCarta = criarHTMLCarta(novaCarta, funcaoJogar, classeCss, ehAliado);
     let divMao = document.getElementById(idMaoHTML);
     if (divMao) divMao.insertAdjacentHTML('beforeend', htmlDaCarta);
-    setTimeout(() => mostrarImpactoVfx(idUnico, "ressurreicao"), 40);
 
     let pacoteItem = document.getElementById("pacote-" + idItem);
     if (pacoteItem) pacoteItem.remove();
@@ -3315,6 +4493,99 @@ function executarTraicao(idAlvoPacote) {
     // 🔥 AQUI ESTÁ A MÁGICA: Passa o turno automaticamente após a traição!
     passarTurno();
 }
+// 🪵 Faz uma cópia visual do Barril rolar até o alvo. O impacto e a transformação reais
+// só são liberados quando ele chega, para a animação e a regra do jogo acontecerem juntas.
+function animarBarrilBarbaroRolando(idBarril, idPacoteAlvo, aoImpactar) {
+    let pacoteBarril = document.getElementById("pacote-" + idBarril);
+    let pacoteAlvo = document.getElementById(idPacoteAlvo);
+    if (!pacoteBarril || !pacoteAlvo) {
+        if (typeof aoImpactar === "function") aoImpactar();
+        return;
+    }
+
+    let origem = obterCentroVisual(pacoteBarril);
+    let destino = obterCentroVisual(pacoteAlvo);
+    if (!origem || !destino) {
+        if (typeof aoImpactar === "function") aoImpactar();
+        return;
+    }
+
+    pacoteBarril.classList.add("barril-barbaro-partindo");
+
+    let barrilVisual = document.createElement("span");
+    barrilVisual.className = "barril-barbaro-rolando";
+    barrilVisual.setAttribute("aria-hidden", "true");
+    barrilVisual.style.left = origem.x + "px";
+    barrilVisual.style.top = origem.y + "px";
+    barrilVisual.style.setProperty("--barril-barbaro-x", (destino.x - origem.x) + "px");
+    barrilVisual.style.setProperty("--barril-barbaro-y", (destino.y - origem.y) + "px");
+    barrilVisual.style.setProperty("--barril-barbaro-meio-x", ((destino.x - origem.x) / 2) + "px");
+    barrilVisual.style.setProperty("--barril-barbaro-meio-y", ((destino.y - origem.y) / 2 - 32) + "px");
+
+    let imagemOriginal = pacoteBarril.querySelector("img");
+    if (imagemOriginal) {
+        let imagem = document.createElement("img");
+        imagem.src = imagemOriginal.src;
+        imagem.alt = "";
+        barrilVisual.appendChild(imagem);
+    } else {
+        barrilVisual.textContent = "🛢️";
+    }
+    document.body.appendChild(barrilVisual);
+
+    setTimeout(() => {
+        let impacto = document.createElement("span");
+        impacto.className = "impacto-barril-barbaro";
+        impacto.setAttribute("aria-hidden", "true");
+        impacto.style.left = destino.x + "px";
+        impacto.style.top = destino.y + "px";
+
+        for (let i = 0; i < 7; i++) {
+            let fumaca = document.createElement("b");
+            fumaca.className = "fumaca-barril-barbaro";
+            fumaca.style.setProperty("--fumaca-barbaro-x", (((i % 4) - 1.5) * 25) + "px");
+            fumaca.style.setProperty("--fumaca-barbaro-y", (-22 - (i % 3) * 17) + "px");
+            fumaca.style.setProperty("--fumaca-barbaro-atraso", (i * 0.035) + "s");
+            impacto.appendChild(fumaca);
+        }
+
+        for (let i = 0; i < 6; i++) {
+            let lasca = document.createElement("i");
+            lasca.className = "lasca-barril-barbaro";
+            lasca.style.setProperty("--lasca-barbaro-x", (((i % 3) - 1) * 34) + "px");
+            lasca.style.setProperty("--lasca-barbaro-y", (i < 3 ? -31 - i * 5 : 22 + (i - 3) * 7) + "px");
+            lasca.style.setProperty("--lasca-barbaro-giro", ((i * 63) - 120) + "deg");
+            impacto.appendChild(lasca);
+        }
+
+        let barbaroVisual = document.createElement("span");
+        barbaroVisual.className = "barbaro-saindo-do-impacto";
+        let barbaroBase = bancoDeCartas.find(carta => carta.nome === "Bárbaro");
+        let imagemBarbaro = document.createElement("img");
+        imagemBarbaro.src = barbaroBase ? barbaroBase.img : "barbaro.png";
+        imagemBarbaro.alt = "";
+        barbaroVisual.appendChild(imagemBarbaro);
+        impacto.appendChild(barbaroVisual);
+
+        document.body.appendChild(impacto);
+        setTimeout(() => { if (impacto.parentNode) impacto.remove(); }, 1250);
+
+        let alvoAtual = document.getElementById(idPacoteAlvo);
+        if (alvoAtual) {
+            alvoAtual.classList.remove("impactado-pelo-barril-barbaro");
+            void alvoAtual.offsetWidth;
+            alvoAtual.classList.add("impactado-pelo-barril-barbaro");
+            setTimeout(() => {
+                if (alvoAtual.isConnected) alvoAtual.classList.remove("impactado-pelo-barril-barbaro");
+            }, 720);
+        }
+
+        if (typeof aoImpactar === "function") aoImpactar();
+    }, 700);
+
+    setTimeout(() => { if (barrilVisual.parentNode) barrilVisual.remove(); }, 850);
+}
+
 // Reconstrói a carta como um Bárbaro de verdade. Assim ela recebe a imagem, os botões
 // e os cliques normais da nova forma, sem recuperar a vida perdida pelo Barril.
 function transformarBarrilBarbaroEmBarbaro(idUnico, ehAliado) {
@@ -3358,26 +4629,62 @@ function transformarBarrilBarbaroEmBarbaro(idUnico, ehAliado) {
     if (ehAliado) jogarCarta("pacote-" + idUnico, true);
     else jogarCartaInimigo("pacote-" + idUnico, true);
 
+    pacoteNovo.classList.add("barbaro-revelado-do-barril");
+    setTimeout(() => {
+        if (pacoteNovo.isConnected) pacoteNovo.classList.remove("barbaro-revelado-do-barril");
+    }, 1050);
+
     return pacoteNovo;
 }
 
 function aplicarAlvoBarrilBarbaro(idPacoteAlvo) {
+    if (barrilBarbaroEmAnimacao) return;
+
     let pacoteAlvo = document.getElementById(idPacoteAlvo);
-    if (!pacoteAlvo) return;
+    let pacoteBarril = document.getElementById("pacote-" + idBarrilAtivo);
+    if (!pacoteAlvo || !pacoteBarril) {
+        modoAlvoBarrilBarbaro = false;
+        modoAlvoBarrilBarbaroInimigo = false;
+        idBarrilAtivo = null;
+        return;
+    }
+
+    let barrilEhAliado = !!pacoteBarril.closest("#campo-j1");
+    let alvoEhAliado = !!pacoteAlvo.closest("#campo-j1");
+    if (barrilEhAliado === alvoEhAliado) {
+        return narrar("❌ O Barril de Bárbaro precisa atingir uma carta do campo oposto!");
+    }
+
+    let idBarrilQueAtacou = idBarrilAtivo;
+    let splashAtivo = !!splashBarbaroAtivo[idBarrilQueAtacou];
+    modoAlvoBarrilBarbaro = false;
+    modoAlvoBarrilBarbaroInimigo = false;
+    barrilBarbaroEmAnimacao = true;
+
+    animarBarrilBarbaroRolando(idBarrilQueAtacou, idPacoteAlvo, () => {
+        concluirImpactoBarrilBarbaro(idPacoteAlvo, idBarrilQueAtacou, barrilEhAliado, splashAtivo);
+    });
+}
+
+function concluirImpactoBarrilBarbaro(idPacoteAlvo, idBarrilQueAtacou, ehBarrilAliado, splashAtivo) {
+    let pacoteAlvo = document.getElementById(idPacoteAlvo);
+    let pacoteBarrilAtivo = document.getElementById("pacote-" + idBarrilQueAtacou);
+    if (!pacoteAlvo || !pacoteBarrilAtivo) {
+        barrilBarbaroEmAnimacao = false;
+        delete splashBarbaroAtivo[idBarrilQueAtacou];
+        idBarrilAtivo = null;
+        narrar("🪵 O impacto do Barril de Bárbaro foi interrompido.");
+        return;
+    }
 
     let idSemPacoteAlvo = idPacoteAlvo.replace("pacote-", "");
     let txtVidaAlvo = document.getElementById("vida-" + idSemPacoteAlvo);
-    if (!txtVidaAlvo) return;
+    if (!txtVidaAlvo) {
+        barrilBarbaroEmAnimacao = false;
+        return;
+    }
 
-    // Descobre o lado pela posição real. Um Barril de Bárbaro invocado pelo Necromante
-    // pode ter ID "necro_..." mesmo pertencendo ao bot.
-    let pacoteBarrilAtivo = document.getElementById("pacote-" + idBarrilAtivo);
-    let ehBarrilAliado = pacoteBarrilAtivo
-        ? !!pacoteBarrilAtivo.closest("#campo-j1")
-        : !idBarrilAtivo.includes("inimigo");
     let textoNarracao = ehBarrilAliado ? "🪵 Seu Barril atingiu o alvo!" : "🪵 O Barril Inimigo atingiu sua carta!";
-
-    animarBarrilBarbaro(idBarrilAtivo, idSemPacoteAlvo);
 
     // 1. Dano de Impacto Fixo (3 de Dano)
     // 🩹 CORREÇÃO: nunca deixa a vida mostrar número negativo — trava em 0.
@@ -3390,6 +4697,7 @@ function aplicarAlvoBarrilBarbaro(idPacoteAlvo) {
         let nomeAlvoBarrilBarbaro = obterNomeEfetivoCarta(idSemPacoteAlvo, nomeAlvoExibido);
         let ladoAlvoBarrilBarbaro = pacoteAlvo.closest("#campo-j1") ? "j1" : "j2";
         registrarMorte(nomeAlvoBarrilBarbaro, ladoAlvoBarrilBarbaro);
+        guardarOrigemTransformacaoOrk(nomeAlvoBarrilBarbaro, idSemPacoteAlvo, pacoteAlvo);
         pacoteAlvo.remove();
         ativarPassivasAoMorrer(
             nomeAlvoBarrilBarbaro,
@@ -3401,7 +4709,7 @@ function aplicarAlvoBarrilBarbaro(idPacoteAlvo) {
     }
 
     // 2. Dano Splash (Se o Especial rodou 5 antes, só pra ESTE Barril específico)
-    if (splashBarbaroAtivo[idBarrilAtivo]) {
+    if (splashAtivo) {
         textoNarracao += " 💥 Splash! As cartas ao lado sofreram 1 de dano!";
         let vizinhos = [];
         if (pacoteAlvo.previousElementSibling) vizinhos.push(pacoteAlvo.previousElementSibling);
@@ -3420,6 +4728,7 @@ function aplicarAlvoBarrilBarbaro(idPacoteAlvo) {
                         let nomeVizinhoBarril = obterNomeEfetivoCarta(idVizinhoBarril, nomeVizinhoExibido);
                         let ladoVizinhoBarril = vizinho.closest("#campo-j1") ? "j1" : "j2";
                         registrarMorte(nomeVizinhoBarril, ladoVizinhoBarril);
+                        guardarOrigemTransformacaoOrk(nomeVizinhoBarril, idVizinhoBarril, vizinho);
                         vizinho.remove();
                         ativarPassivasAoMorrer(
                             nomeVizinhoBarril,
@@ -3436,18 +4745,19 @@ function aplicarAlvoBarrilBarbaro(idPacoteAlvo) {
     narrar(textoNarracao);
 
     // 🦇 VAMPI7 — o impacto do Barril de Bárbaro também conta como um ataque de verdade.
-    dispararVampi7JuntoDoAtaque(idBarrilAtivo, idPacoteAlvo);
+    dispararVampi7JuntoDoAtaque(idBarrilQueAtacou, idPacoteAlvo);
     // 🛸 PORTABLE — ataca junto enquanto a bateria durar.
-    dispararPortableJuntoDoAtaque(idBarrilAtivo, idPacoteAlvo);
+    dispararPortableJuntoDoAtaque(idBarrilQueAtacou, idPacoteAlvo);
 
     // 3. Transformação real: preserva a vida restante e recria a carta como Bárbaro 2/2.
-    transformarBarrilBarbaroEmBarbaro(idBarrilAtivo, ehBarrilAliado);
+    transformarBarrilBarbaroEmBarbaro(idBarrilQueAtacou, ehBarrilAliado);
 
     // 4. Limpa as variáveis e passa a vez
     modoAlvoBarrilBarbaro = false;
     modoAlvoBarrilBarbaroInimigo = false;
-    delete splashBarbaroAtivo[idBarrilAtivo];
+    delete splashBarbaroAtivo[idBarrilQueAtacou];
     idBarrilAtivo = null;
+    barrilBarbaroEmAnimacao = false;
 
     passarTurno();
     if (typeof atualizarTodosUnidoes === "function") atualizarTodosUnidoes();
@@ -3507,7 +4817,6 @@ function aplicarEspecialBumerskeletonAntesDeAtacar(idPacoteAlvo) {
     let isInimigoParaOJogo = (ladoAlvo === "j2");
     let campoAlvoId = (ladoAlvo === "j1") ? "campo-j1" : "campo-j2";
 
-    animarBumerangueEntre(idBume, idAlvoPuro, false);
     aplicarDanoAtaqueArea(idPacoteAlvo, danoBase, isInimigoParaOJogo);
     narrar(`🪃 O bumerangue acertou [${nomeAlvo}] causando ${danoBase} de dano!`);
 
@@ -3528,6 +4837,7 @@ function executarChainBumerangue(idBumerskeleton, idPrimeiroAlvo, campoAlvoId, a
             return narrar("⚠️ Erro: As variáveis do bumerangue estão faltando no topo do main.js!");
         }
         alvosDoBumerangue[idBumerskeleton] = [idPrimeiroAlvo];
+        let pontoVisualAnterior = iniciarTrajetoVisualBumerangue(idBumerskeleton, idPrimeiroAlvo);
 
         let campo = document.getElementById(campoAlvoId);
         if (!campo) { if (typeof aoConcluir === "function") aoConcluir(); return; }
@@ -3549,14 +4859,19 @@ function executarChainBumerangue(idBumerskeleton, idPrimeiroAlvo, campoAlvoId, a
                 danoDestaBatida = tabelaDanoBumerangue[indexDano] || 4;
             }
 
+            let origemDesteRicochete = pontoVisualAnterior;
+            pontoVisualAnterior = registrarRicocheteVisualBumerangue(
+                idBumerskeleton,
+                origemDesteRicochete,
+                pacote,
+                Math.max(0, (delay - 180) / 1000)
+            );
+
             setTimeout(() => {
                 let txtVida = document.getElementById("vida-" + idOutroAlvo);
                 let nomeAlvo = pacote.querySelector(".nome-carta").innerText;
                 
                 if (txtVida) {
-                    let caminhoAtual = alvosDoBumerangue[idBumerskeleton] || [];
-                    let idOrigemRicochete = caminhoAtual[caminhoAtual.length - 1] || idBumerskeleton;
-                    animarBumerangueEntre(idOrigemRicochete, idOutroAlvo, false);
                     let vidaAtual = parseFloat(txtVida.innerText);
                     // 🩹 CORREÇÃO: nunca deixa a vida mostrar número negativo — trava em 0.
                     let novaVida = Math.max(0, vidaAtual - danoDestaBatida);
@@ -3571,6 +4886,7 @@ function executarChainBumerangue(idBumerskeleton, idPrimeiroAlvo, campoAlvoId, a
                         let nomeEfetivoAlvo = obterNomeEfetivoCarta(idOutroAlvo, nomeAlvo);
                         narrar(`BUM! [${nomeAlvo}] foi destruído pelo ricochete!`);
                         registrarMorte(nomeEfetivoAlvo, campoAlvoId === "campo-j2" ? "j2" : "j1");
+                        guardarOrigemTransformacaoOrk(nomeEfetivoAlvo, idOutroAlvo, pacote);
                         pacote.remove();
                         ativarPassivasAoMorrer(nomeEfetivoAlvo, idOutroAlvo, campoAlvoId);
                     }
@@ -3695,303 +5011,265 @@ function mostrarEfeitoPerdaAtaque(idCarta) {
     }, 1200);
 }
 
-// ============================================================================
-// MOTOR DE EFEITOS TEMÁTICOS DE COMBATE
-// ============================================================================
-function obterCamadaVfxCombate() {
-    let camada = document.getElementById("camada-vfx-combate");
-    if (!camada) {
-        camada = document.createElement("div");
-        camada.id = "camada-vfx-combate";
-        document.body.appendChild(camada);
-    }
-    return camada;
+// 🛡️ Efeito discreto compartilhado pelo Guerreiro e pelo suporte Escudo.
+// O estado real continua em escudoGuerreiro; estas funções cuidam apenas do visual.
+function criarHTMLVisualEscudo() {
+    return `<div class="visual-escudo-ativo" aria-hidden="true"><span class="icone-escudo-fosco"></span></div>`;
 }
 
-function obterCartaVfx(referencia) {
-    if (!referencia) return null;
-    if (referencia.nodeType === Node.ELEMENT_NODE) {
-        return referencia.matches("[id^='pacote-']") ? referencia : referencia.closest("[id^='pacote-']");
-    }
-    let texto = String(referencia);
-    let idPuro = texto.replace(/^pacote-/, "");
-    return document.getElementById("pacote-" + idPuro) || document.getElementById(texto);
+function localizarCartaDoEscudo(idCarta) {
+    let idPuro = String(idCarta).replace("pacote-", "");
+    return document.getElementById("pacote-" + idPuro);
 }
 
-function obterCentroVfx(referencia) {
-    let carta = obterCartaVfx(referencia);
-    let chave = carta ? carta.id.replace("pacote-", "") : String(referencia || "").replace(/^pacote-/, "");
+function ativarVisualEscudo(idCarta) {
+    let carta = localizarCartaDoEscudo(idCarta);
+    if (!carta) return;
 
-    if (carta && carta.isConnected) {
-        let r = carta.getBoundingClientRect();
-        let salvo = {
-            xPagina: r.left + r.width / 2 + window.scrollX,
-            yPagina: r.top + r.height / 2 + window.scrollY
-        };
-        posicoesVfxCartas.set(chave, salvo);
-        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-    }
+    carta.classList.add("com-escudo-ativo");
 
-    let salvo = posicoesVfxCartas.get(chave);
-    if (salvo) return { x: salvo.xPagina - window.scrollX, y: salvo.yPagina - window.scrollY };
-    return null;
+    let visual = carta.querySelector(":scope > .visual-escudo-ativo");
+    if (!visual) carta.insertAdjacentHTML("afterbegin", criarHTMLVisualEscudo());
 }
 
-function criarProjetilVfx(origem, destino, opcoes = {}) {
-    let inicio = obterCentroVfx(origem);
-    let fim = obterCentroVfx(destino);
-    if (!inicio || !fim) return null;
+function quebrarVisualEscudo(idCarta) {
+    let carta = localizarCartaDoEscudo(idCarta);
+    if (!carta) return;
 
-    let elemento = opcoes.imagem ? document.createElement("img") : document.createElement("span");
-    if (opcoes.imagem) {
-        elemento.src = opcoes.imagem;
-        elemento.alt = "";
-    } else {
-        elemento.innerText = opcoes.simbolo || "✨";
+    carta.classList.remove("com-escudo-ativo");
+
+    let visual = carta.querySelector(":scope > .visual-escudo-ativo");
+    if (!visual) {
+        carta.insertAdjacentHTML("afterbegin", criarHTMLVisualEscudo());
+        visual = carta.querySelector(":scope > .visual-escudo-ativo");
     }
 
-    elemento.className = `vfx-projetil ${opcoes.classe || ""}`.trim();
-    elemento.style.left = inicio.x + "px";
-    elemento.style.top = inicio.y + "px";
+    visual.classList.add("escudo-quebrando");
 
-    let dx = fim.x - inicio.x;
-    let dy = fim.y - inicio.y;
-    let arco = Number.isFinite(opcoes.arco) ? opcoes.arco : 55;
-    elemento.style.setProperty("--vfx-x-meio", (dx * 0.5) + "px");
-    elemento.style.setProperty("--vfx-y-meio", (dy * 0.5 - arco) + "px");
-    elemento.style.setProperty("--vfx-x-final", dx + "px");
-    elemento.style.setProperty("--vfx-y-final", dy + "px");
-    elemento.style.animationDuration = (opcoes.duracao || 650) + "ms";
+    [
+        [-34, -30, -38], [34, -28, 42], [-42, 16, -65],
+        [39, 22, 58], [0, 42, 12]
+    ].forEach(([x, y, giro], indice) => {
+        let fragmento = document.createElement("span");
+        fragmento.className = "fragmento-escudo";
+        fragmento.textContent = indice % 2 === 0 ? "◆" : "◢";
+        fragmento.style.setProperty("--escudo-x", x + "px");
+        fragmento.style.setProperty("--escudo-y", y + "px");
+        fragmento.style.setProperty("--escudo-giro", giro + "deg");
+        visual.appendChild(fragmento);
+    });
 
-    obterCamadaVfxCombate().appendChild(elemento);
-    setTimeout(() => elemento.remove(), (opcoes.duracao || 650) + 180);
-    return elemento;
-}
-
-function mostrarImpactoVfx(referencia, tipo = "impacto") {
-    let centro = obterCentroVfx(referencia);
-    if (!centro) return;
-    let simbolos = {
-        impacto: "💥",
-        escudo: "🛡️",
-        veneno: "☠️",
-        explosao: "💥",
-        ressurreicao: "✨",
-        sombrio: "⚔️"
-    };
-    let impacto = document.createElement("span");
-    impacto.className = `vfx-impacto vfx-impacto-${tipo}`;
-    impacto.innerText = simbolos[tipo] || simbolos.impacto;
-    impacto.style.left = centro.x + "px";
-    impacto.style.top = centro.y + "px";
-    obterCamadaVfxCombate().appendChild(impacto);
-    setTimeout(() => impacto.remove(), 950);
-}
-
-function animarGoblinsDoBarril(idBarril, idAlvo, comBarril = false) {
-    if (comBarril) {
-        criarProjetilVfx(idBarril, idAlvo, {
-            imagem: "barril de goblin.png",
-            classe: "vfx-barril-goblin",
-            duracao: 720,
-            arco: 90
-        });
-    }
-
-    let atraso = comBarril ? 500 : 0;
     setTimeout(() => {
-        let centro = obterCentroVfx(idAlvo);
-        if (!centro) return;
-        for (let i = 0; i < 3; i++) {
-            let goblin = document.createElement("img");
-            goblin.src = "goblin.png";
-            goblin.alt = "";
-            goblin.className = "vfx-goblin-atacando";
-            goblin.style.left = centro.x + "px";
-            goblin.style.top = centro.y + "px";
-            goblin.style.setProperty("--goblin-x", ((i - 1) * 42) + "px");
-            goblin.style.setProperty("--goblin-y", ((i % 2 === 0 ? -1 : 1) * 30) + "px");
-            goblin.style.animationDelay = (i * 70) + "ms";
-            obterCamadaVfxCombate().appendChild(goblin);
-            setTimeout(() => goblin.remove(), 1050 + i * 70);
+        if (visual.parentNode) visual.remove();
+    }, 650);
+}
+
+function sincronizarVisuaisEscudo() {
+    document.querySelectorAll("[id^='pacote-']").forEach(carta => {
+        let idCarta = carta.id.replace("pacote-", "");
+        if (escudoGuerreiro[idCarta]) ativarVisualEscudo(idCarta);
+    });
+}
+
+// 🛢️ BARRIL PROTETOR — a carta real do Barril permanece na fileira. A protegida recebe
+// somente a aura marrom; o visual de quebra continua preparado, mas fica oculto até quebrar.
+function posicionarBarrilSobreCartaProtegida(idCarta, idBarril) {
+    let idCartaPuro = String(idCarta).replace("pacote-", "");
+    let idBarrilPuro = String(idBarril).replace("pacote-", "");
+    let carta = document.getElementById("pacote-" + idCartaPuro);
+    let barril = document.getElementById("pacote-" + idBarrilPuro);
+    if (!carta || !barril || carta === barril) return;
+
+    let campo = carta.closest("#campo-j1, #campo-j2");
+    if (!campo || barril.closest("#campo-j1, #campo-j2") !== campo) return;
+
+    barril.classList.add("barril-empilhado-sobre-carta");
+    barril.dataset.cartaProtegida = idCartaPuro;
+
+    let auraClicavel = barril.querySelector(":scope > .aura-barril-empilhado");
+    if (!auraClicavel) {
+        auraClicavel = document.createElement("span");
+        auraClicavel.className = "aura-barril-empilhado";
+        auraClicavel.setAttribute("role", "button");
+        auraClicavel.setAttribute("aria-label", "Barril protetor");
+        auraClicavel.title = "Barril protetor — clique para selecionar";
+        auraClicavel.innerHTML = "<i></i>";
+        auraClicavel.onclick = function(evento) {
+            evento.stopPropagation();
+            let imagemOriginal = barril.querySelector("img, .imagem-carta");
+            if (imagemOriginal) imagemOriginal.click();
+        };
+        barril.appendChild(auraClicavel);
+    }
+
+    // Ao receber position:absolute, o Barril deixa de ocupar um espaço na fileira. A leitura
+    // abaixo já usa a posição nova da carta protegida para centralizar a pilha corretamente.
+    let retanguloCampo = campo.getBoundingClientRect();
+    let retanguloCarta = carta.getBoundingClientRect();
+    let larguraBarril = barril.offsetWidth || retanguloCarta.width;
+    let esquerda = retanguloCarta.left - retanguloCampo.left + campo.scrollLeft
+        + (retanguloCarta.width - larguraBarril) / 2;
+    let topo = retanguloCarta.top - retanguloCampo.top + campo.scrollTop - 7;
+
+    barril.style.left = esquerda + "px";
+    barril.style.top = topo + "px";
+}
+
+function restaurarPosicaoBarril(idBarril) {
+    let barril = document.getElementById("pacote-" + String(idBarril).replace("pacote-", ""));
+    if (!barril) return;
+    barril.classList.remove("barril-empilhado-sobre-carta");
+    barril.removeAttribute("data-carta-protegida");
+    barril.style.removeProperty("left");
+    barril.style.removeProperty("top");
+    let auraClicavel = barril.querySelector(":scope > .aura-barril-empilhado");
+    if (auraClicavel) auraClicavel.remove();
+}
+
+function ativarVisualProtecaoBarril(idCarta, idBarril) {
+    let carta = document.getElementById("pacote-" + String(idCarta).replace("pacote-", ""));
+    if (!carta) return;
+
+    carta.classList.add("com-protecao-barril");
+    let visual = carta.querySelector(":scope > .visual-protecao-barril");
+    if (!visual) {
+        visual = document.createElement("div");
+        visual.className = "visual-protecao-barril";
+        visual.setAttribute("aria-hidden", "true");
+        visual.innerHTML = '<span class="icone-barril-fosco"><i></i></span>';
+        carta.insertAdjacentElement("afterbegin", visual);
+    }
+    visual.dataset.barrilId = String(idBarril);
+    // Garante o formato original: Barril visível ao lado das cartas, sem nada sobre o alvo.
+    restaurarPosicaoBarril(idBarril);
+}
+
+function quebrarVisualProtecaoBarril(idCarta, passivaAtivada) {
+    let carta = document.getElementById("pacote-" + String(idCarta).replace("pacote-", ""));
+    if (!carta) return;
+
+    carta.classList.remove("com-protecao-barril");
+    carta.classList.add("carta-liberta-do-barril");
+
+    let visual = carta.querySelector(":scope > .visual-protecao-barril");
+    if (!visual) {
+        ativarVisualProtecaoBarril(idCarta, "quebrando");
+        visual = carta.querySelector(":scope > .visual-protecao-barril");
+        carta.classList.remove("com-protecao-barril");
+    }
+    if (!visual) return;
+
+    visual.classList.add("barril-protecao-quebrando");
+    if (passivaAtivada) visual.classList.add("barril-passiva-ativada");
+
+    [
+        [-45, -35, -70], [43, -32, 64], [-54, 2, -105],
+        [52, 10, 92], [-30, 43, 38], [31, 45, -42], [2, -51, 18]
+    ].forEach(([x, y, giro], indice) => {
+        let lasca = document.createElement("span");
+        lasca.className = "lasca-protecao-barril lasca-barril-" + (indice % 3);
+        lasca.style.setProperty("--lasca-barril-x", x + "px");
+        lasca.style.setProperty("--lasca-barril-y", y + "px");
+        lasca.style.setProperty("--lasca-barril-giro", giro + "deg");
+        visual.appendChild(lasca);
+    });
+
+    setTimeout(() => {
+        carta.classList.remove("carta-liberta-do-barril");
+        if (visual.parentNode) visual.remove();
+    }, 900);
+}
+
+function animarCartaSaindoDoBarril(carta) {
+    if (!carta) return;
+
+    carta.classList.remove("carta-saindo-da-passiva-barril");
+    void carta.offsetWidth;
+    carta.classList.add("carta-saindo-da-passiva-barril");
+
+    let casca = document.createElement("span");
+    casca.className = "casca-passiva-barril";
+    casca.setAttribute("aria-hidden", "true");
+    casca.innerHTML = '<i class="metade-barril metade-barril-esquerda"></i><i class="metade-barril metade-barril-direita"></i>';
+    carta.appendChild(casca);
+
+    setTimeout(() => {
+        carta.classList.remove("carta-saindo-da-passiva-barril");
+        if (casca.parentNode) casca.remove();
+    }, 1100);
+}
+
+function sincronizarVisuaisProtecaoBarril() {
+    document.querySelectorAll(".visual-protecao-barril").forEach(visual => {
+        if (visual.classList.contains("barril-protecao-quebrando")) return;
+        let carta = visual.parentElement;
+        let idCarta = carta && carta.id ? carta.id.replace("pacote-", "") : "";
+        let idBarril = cartasProtegidas[idCarta];
+        let vinculoValido = idBarril
+            && String(idBarril) === String(visual.dataset.barrilId)
+            && document.getElementById("pacote-" + idBarril);
+        if (!vinculoValido) {
+            if (carta) carta.classList.remove("com-protecao-barril");
+            visual.remove();
         }
-        mostrarImpactoVfx(idAlvo, "impacto");
-    }, atraso);
-}
-
-function animarBarrilBarbaro(idBarril, idAlvo) {
-    criarProjetilVfx(idBarril, idAlvo, {
-        imagem: "barril de barbaro.png",
-        classe: "vfx-barril-barbaro",
-        duracao: 760,
-        arco: 5
     });
-    setTimeout(() => mostrarImpactoVfx(idAlvo, "explosao"), 570);
-}
 
-function animarBumerangueEntre(origem, destino, voltando = false) {
-    criarProjetilVfx(origem, destino, {
-        simbolo: "🪃",
-        classe: voltando ? "vfx-bumerangue vfx-bumerangue-volta" : "vfx-bumerangue",
-        duracao: 620,
-        arco: voltando ? -45 : 55
-    });
-}
-
-function animarAtaqueTematico(nomeCarta, idAtacante, idAlvo) {
-    let nome = String(nomeCarta || "");
-    if (nome.includes("Barril de Goblin") || nome.includes("Barril de Bárbaro")) return;
-
-    if (nome === "Goblin" || nome === "Trio de Goblin") {
-        let quantidade = nome === "Trio de Goblin" ? 3 : 1;
-        for (let i = 0; i < quantidade; i++) {
-            setTimeout(() => criarProjetilVfx(idAtacante, idAlvo, {
-                imagem: "goblin.png",
-                classe: "vfx-goblin-projetil",
-                duracao: 470,
-                arco: 24 + i * 12
-            }), i * 90);
+    Object.entries(cartasProtegidas).forEach(([idCarta, idBarril]) => {
+        if (String(idCarta) === String(idBarril)) {
+            delete cartasProtegidas[idCarta];
+            restaurarPosicaoBarril(idBarril);
+            return;
         }
-        setTimeout(() => mostrarImpactoVfx(idAlvo, "impacto"), 400);
-    } else if (nome === "Arqueiro") {
-        criarProjetilVfx(idAtacante, idAlvo, { simbolo: "➶", classe: "vfx-flecha", duracao: 480, arco: 8 });
-    } else if (nome === "Mago") {
-        criarProjetilVfx(idAtacante, idAlvo, { simbolo: "🔮", classe: "vfx-orbe-magico", duracao: 620, arco: 45 });
-    } else if (nome === "Bumerskeleton") {
-        animarBumerangueEntre(idAtacante, idAlvo, false);
-    } else if (nome === "Mensageiro") {
-        criarProjetilVfx(idAtacante, idAlvo, { simbolo: "💨", classe: "vfx-vento", duracao: 520, arco: 0 });
-    } else if (nome === "Ork") {
-        criarProjetilVfx(idAtacante, idAlvo, { simbolo: "👊", classe: "vfx-golpe-ork", duracao: 430, arco: 10 });
-    } else if (nome === "Bárbaro" || nome === "Trio de Bárbaros" || nome === "Guerreiro") {
-        criarProjetilVfx(idAtacante, idAlvo, { simbolo: "⚔️", classe: "vfx-golpe-espada", duracao: 430, arco: 15 });
-    }
-}
-
-function animarOndaDeVento(idAtacante, alvos) {
-    (alvos || []).forEach((alvo, indice) => {
-        setTimeout(() => criarProjetilVfx(idAtacante, alvo, {
-            simbolo: "🌪️",
-            classe: "vfx-vento-area",
-            duracao: 650,
-            arco: indice % 2 ? 35 : -15
-        }), indice * 80);
-    });
-}
-
-function animarGolpeSombrio(idAtacante, alvos) {
-    (alvos || []).forEach((alvo, indice) => {
-        setTimeout(() => {
-            criarProjetilVfx(idAtacante, alvo, { simbolo: "⚔️", classe: "vfx-golpe-sombrio", duracao: 480, arco: 5 });
-            setTimeout(() => mostrarImpactoVfx(alvo, "sombrio"), 320);
-        }, indice * 90);
-    });
-}
-
-function animarVenenoMago(idMago, idAlvo) {
-    criarProjetilVfx(idMago, idAlvo, { simbolo: "☠️", classe: "vfx-veneno", duracao: 650, arco: 60 });
-    setTimeout(() => mostrarImpactoVfx(idAlvo, "veneno"), 470);
-}
-
-function criarOverlayElemental(pacote, tipo) {
-    if (!pacote) return null;
-    let classe = `efeito-elemental-${tipo}`;
-    let existente = pacote.querySelector("." + classe);
-    if (existente) return existente;
-
-    let overlay = document.createElement("div");
-    overlay.className = `efeito-elemental ${classe}`;
-    let simbolo = tipo === "gelo" ? "❄" : "🔥";
-    let quantidade = tipo === "gelo" ? 7 : 6;
-    for (let i = 0; i < quantidade; i++) {
-        let particula = document.createElement("span");
-        particula.innerText = simbolo;
-        particula.style.left = (8 + Math.random() * 82) + "%";
-        particula.style.animationDelay = (Math.random() * 0.75) + "s";
-        particula.style.animationDuration = (0.8 + Math.random() * 0.65) + "s";
-        overlay.appendChild(particula);
-    }
-    pacote.appendChild(overlay);
-    return overlay;
-}
-
-function sincronizarGeloVfx(pacote) {
-    if (!pacote || !pacote.matches || !pacote.matches("[id^='pacote-']")) return;
-    let overlay = pacote.querySelector(".efeito-elemental-gelo");
-    if (pacote.classList.contains("congelada")) {
-        if (!overlay) {
-            overlay = criarOverlayElemental(pacote, "gelo");
-            pacote.classList.add("vfx-congelando-agora");
-            setTimeout(() => pacote.classList.remove("vfx-congelando-agora"), 700);
+        let barrilExiste = document.getElementById("pacote-" + idBarril);
+        let cartaExiste = document.getElementById("pacote-" + idCarta);
+        if (barrilExiste && cartaExiste) {
+            ativarVisualProtecaoBarril(idCarta, idBarril);
+        } else {
+            restaurarPosicaoBarril(idBarril);
+            delete cartasProtegidas[idCarta];
         }
-    } else if (overlay) {
-        overlay.remove();
-    }
-}
-
-function ativarFogoCarta(referencia, duracao = 0, persistente = false) {
-    let pacote = obterCartaVfx(referencia);
-    if (!pacote) return;
-    pacote.classList.add("em-chamas-vfx");
-    pacote.classList.remove("com-polvora-vfx");
-    criarOverlayElemental(pacote, "fogo");
-    if (persistente) pacote.dataset.fogoVfxPersistente = "1";
-
-    if (duracao > 0) {
-        setTimeout(() => {
-            if (pacote.dataset.fogoVfxPersistente !== "1") desativarFogoCarta(pacote);
-        }, duracao);
-    }
-}
-
-function desativarFogoCarta(referencia) {
-    let pacote = obterCartaVfx(referencia);
-    if (!pacote) return;
-    pacote.classList.remove("em-chamas-vfx", "com-polvora-vfx");
-    delete pacote.dataset.fogoVfxPersistente;
-    let overlay = pacote.querySelector(".efeito-elemental-fogo");
-    if (overlay) overlay.remove();
-}
-
-function marcarPolvoraCarta(referencia) {
-    let pacote = obterCartaVfx(referencia);
-    if (pacote) pacote.classList.add("com-polvora-vfx");
-}
-
-function mostrarExplosaoNoCampo(idCampo) {
-    let campo = document.getElementById(idCampo);
-    if (!campo) return;
-    let r = campo.getBoundingClientRect();
-    let explosao = document.createElement("span");
-    explosao.className = "vfx-explosao-campo";
-    explosao.innerText = "💥";
-    explosao.style.left = (r.left + r.width / 2) + "px";
-    explosao.style.top = (r.top + r.height / 2) + "px";
-    obterCamadaVfxCombate().appendChild(explosao);
-    setTimeout(() => explosao.remove(), 1150);
-}
-
-function instalarSistemaVfxCombate() {
-    if (sistemaVfxCombateInstalado) return;
-    sistemaVfxCombateInstalado = true;
-    obterCamadaVfxCombate();
-
-    let observarSubarvore = no => {
-        if (!no || no.nodeType !== Node.ELEMENT_NODE) return;
-        if (no.matches("[id^='pacote-']")) sincronizarGeloVfx(no);
-        no.querySelectorAll("[id^='pacote-']").forEach(sincronizarGeloVfx);
-    };
-
-    let observador = new MutationObserver(mutacoes => {
-        mutacoes.forEach(mutacao => {
-            if (mutacao.type === "attributes") sincronizarGeloVfx(mutacao.target);
-            mutacao.addedNodes.forEach(observarSubarvore);
-        });
     });
-    observador.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["class"] });
+
+    // Se um vínculo foi trocado ou a carta protegida saiu do campo, devolve o Barril
+    // sobrevivente à fileira normal em vez de deixá-lo preso no ar.
+    document.querySelectorAll(".barril-empilhado-sobre-carta").forEach(barril => {
+        let idBarril = barril.id.replace("pacote-", "");
+        let idCarta = barril.dataset.cartaProtegida || "";
+        if (!idCarta || String(cartasProtegidas[idCarta]) !== String(idBarril)) {
+            restaurarPosicaoBarril(idBarril);
+        }
+    });
+}
+
+function sincronizarVisuaisVenenoMago() {
+    Object.values(venenosMago).forEach(efeito => {
+        let alvo = document.getElementById("pacote-" + efeito.idAlvo);
+        if (alvo) alvo.classList.add("envenenada");
+    });
 }
 
 window.onload = function() {
-    instalarSistemaVfxCombate();
     iniciarJogo();
+    sincronizarVisuaisEscudo();
+    sincronizarVisuaisVenenoMago();
+    sincronizarVisuaisIncendiario();
+    sincronizarVisuaisGeloBumerskeleton();
+    sincronizarMarcadoresBarrilGoblin();
+    sincronizarVisuaisProtecaoBarril();
+
+    window.addEventListener("resize", sincronizarVisuaisProtecaoBarril);
+    document.addEventListener("scroll", sincronizarVisuaisProtecaoBarril, true);
+
+    // Se uma carta protegida/envenenada/marcada for recriada ou movida, o visual reaparece nela.
+    new MutationObserver(() => {
+        sincronizarVisuaisEscudo();
+        sincronizarVisuaisVenenoMago();
+        sincronizarVisuaisIncendiario();
+        sincronizarVisuaisGeloBumerskeleton();
+        sincronizarMarcadoresBarrilGoblin();
+        sincronizarVisuaisProtecaoBarril();
+    }).observe(document.body, {
+        childList: true,
+        subtree: true
+    });
 };
