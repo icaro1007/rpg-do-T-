@@ -334,6 +334,9 @@ function usarHabilidade(nome, idUnico, botao, aoConcluir) {
 
         if (dado === 6) {
             separadaoDividido[idUnico] = 2; // faltam 2 ataques: o do Separado e o da parceira
+            if (typeof animarAtivacaoDivisaoSeparado === "function") {
+                animarAtivacaoDivisaoSeparado(idUnico, idParceira);
+            }
             narrar(`🎲 Tirou 6! Agora é só atacar normalmente: clique em Atacar em ${nome} pra escolher um alvo, e depois em Atacar na parceira pra escolher OUTRO alvo — as duas vão atacar sem se puxar dessa vez, e o turno só passa depois das duas.`);
             notificar(true);
         } else {

@@ -40,7 +40,7 @@ const bancoDeCartas = [
 
             // --- CARTAS DO LOTE 4 ---
             { id: "vampi7", nome: "Vampi7", vida: 0, dano: 0, img: "vampi7.png", qtd: 2 },
-            { id: "portable", nome: "Portable", vida: 2, dano: 1, img: "portable.png", qtd: 2 },
+            { id: "portable", nome: "Portable", vida: 2, dano: 1, img: "Portable.png", qtd: 2 },
             { id: "plus_life", nome: "Plus Life", vida: 0, dano: 0, img: "plus_life.png", qtd: 2 },
             { id: "reviverta", nome: "Reviverta", vida: 0, dano: 0, img: "reviverta.png", qtd: 2 },
             { id: "cracker", nome: "Cracker", vida: 0, dano: 0, img: "cracker.png", qtd: 2 },
