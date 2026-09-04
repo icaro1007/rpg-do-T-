@@ -4710,8 +4710,8 @@ function equiparSuporte(idAlvo) {
             let vidaAtualPlusLife = parseFloat(txtVidaPlusLife.innerText);
             txtVidaPlusLife.innerText = vidaAtualPlusLife + 2;
 
-            // 🚨 EFEITO DE VIDA AQUI: Sobe 3 corações em cascata, pra destacar que curou mais que a Recuperida
-            mostrarEfeitoVida(idAlvo, "recuperou");
+            // 💚 PLUS LIFE: mostra exatamente os 2 corações correspondentes ao bônus de +2.
+            mostrarEfeitoVida(idAlvo, "plus-life");
 
             narrar(`💚 Plus Life usada! [${nomeAlvo}] ganhou 2 de vida.`);
         }
@@ -4841,6 +4841,29 @@ function mostrarCemiterioReviverta(idItem, ehAliado) {
     document.body.appendChild(overlay);
 }
 
+// ✨ REVIVERTA — a carta nasce no lugar correto da mão, mas visualmente desce do céu.
+// A animação usa a própria carta, então continua correta caso o bot a mova para o campo
+// durante a chegada e nunca cria um segundo pacote que possa ser clicado ou atacado.
+function animarChegadaReviverta(pacoteRevivido) {
+    if (!pacoteRevivido) return;
+
+    pacoteRevivido.classList.remove("carta-revivida-descendo");
+
+    let luz = document.createElement("div");
+    luz.className = "luz-chegada-reviverta";
+    luz.setAttribute("aria-hidden", "true");
+    luz.innerHTML = "<span></span><i></i><i></i><i></i><i></i><i></i><i></i>";
+    pacoteRevivido.appendChild(luz);
+
+    void pacoteRevivido.offsetWidth;
+    pacoteRevivido.classList.add("carta-revivida-descendo");
+
+    setTimeout(() => {
+        if (luz.parentNode) luz.remove();
+        if (pacoteRevivido.isConnected) pacoteRevivido.classList.remove("carta-revivida-descendo");
+    }, 1450);
+}
+
 function reviverCartaDoCemiterio(lado, index, idItem, ehAliado) {
     let dadosCarta = cemiterio[lado][index];
     if (!dadosCarta) return;
@@ -4867,6 +4890,9 @@ function reviverCartaDoCemiterio(lado, index, idItem, ehAliado) {
     let overlay = document.getElementById("overlay-cemiterio");
     if (overlay) overlay.remove();
     revivertaPendente = null;
+
+    let pacoteRevivido = document.getElementById("pacote-" + idUnico);
+    if (pacoteRevivido) requestAnimationFrame(() => animarChegadaReviverta(pacoteRevivido));
 
     narrar(`✨ Reviverta! [${dadosCarta.nome}] voltou dos mortos com os atributos originais (❤️${dadosCarta.vida} ⚔️${dadosCarta.dano}) e foi para a mão ${ehAliado ? "aliada" : "do oponente"}.`);
 }
@@ -4966,6 +4992,73 @@ function mostrarRouboCracker(idItem, ehAliado) {
     document.body.appendChild(overlay);
 }
 
+// 🦠 CRACKER — cria uma cópia apenas visual no lugar exato da carta infectada.
+// O pacote verdadeiro pode ser removido imediatamente sem interromper o vírus ou o teleporte.
+function prepararInfeccaoCracker(pacoteOriginal) {
+    if (!pacoteOriginal) return null;
+
+    let rect = pacoteOriginal.getBoundingClientRect();
+    let eco = pacoteOriginal.cloneNode(true);
+    eco.removeAttribute("id");
+    eco.querySelectorAll("[id]").forEach(elemento => elemento.removeAttribute("id"));
+    eco.querySelectorAll("button").forEach(botao => botao.remove());
+    eco.querySelectorAll("[onclick]").forEach(elemento => elemento.removeAttribute("onclick"));
+    eco.className = pacoteOriginal.className + " eco-carta-infectada-cracker";
+    eco.style.left = rect.left + "px";
+    eco.style.top = rect.top + "px";
+    eco.style.width = rect.width + "px";
+    eco.style.height = rect.height + "px";
+
+    let virus = document.createElement("div");
+    virus.className = "virus-visual-cracker";
+    virus.setAttribute("aria-hidden", "true");
+    virus.innerHTML = "<b>☣</b><span>0 1 0 1</span><i></i><i></i><i></i><i></i><i></i><i></i>";
+    eco.appendChild(virus);
+    document.body.appendChild(eco);
+
+    return { eco, rect };
+}
+
+function animarTeleporteCracker(dadosOrigem, pacoteRoubado) {
+    if (!dadosOrigem || !dadosOrigem.eco || !pacoteRoubado) {
+        if (pacoteRoubado) pacoteRoubado.classList.remove("cracker-destino-oculto");
+        return;
+    }
+
+    let eco = dadosOrigem.eco;
+    let origem = dadosOrigem.rect;
+    let destino = pacoteRoubado.getBoundingClientRect();
+    let origemX = origem.left + origem.width / 2;
+    let origemY = origem.top + origem.height / 2;
+    let destinoX = destino.left + destino.width / 2;
+    let destinoY = destino.top + destino.height / 2;
+
+    eco.style.setProperty("--cracker-teleporte-x", (destinoX - origemX) + "px");
+    eco.style.setProperty("--cracker-teleporte-y", (destinoY - origemY) + "px");
+    eco.style.setProperty("--cracker-escala-x", (destino.width / Math.max(origem.width, 1)));
+    eco.style.setProperty("--cracker-escala-y", (destino.height / Math.max(origem.height, 1)));
+    eco.classList.add("cracker-teleportando");
+
+    setTimeout(() => {
+        eco.remove();
+        if (!pacoteRoubado.isConnected) return;
+
+        pacoteRoubado.classList.remove("cracker-destino-oculto");
+        pacoteRoubado.classList.add("carta-reaparecendo-cracker");
+
+        let virusDestino = document.createElement("div");
+        virusDestino.className = "virus-visual-cracker virus-cracker-no-destino";
+        virusDestino.setAttribute("aria-hidden", "true");
+        virusDestino.innerHTML = "<b>☣</b><span>0 1</span><i></i><i></i><i></i><i></i>";
+        pacoteRoubado.appendChild(virusDestino);
+
+        setTimeout(() => {
+            if (virusDestino.parentNode) virusDestino.remove();
+            if (pacoteRoubado.isConnected) pacoteRoubado.classList.remove("carta-reaparecendo-cracker");
+        }, 920);
+    }, 1050);
+}
+
 function roubarCartaCracker(idPacoteDomOriginal, origem, idItem, ehAliado) {
     let pacoteOriginal = document.getElementById(idPacoteDomOriginal);
     if (!pacoteOriginal) return;
@@ -4987,6 +5080,7 @@ function roubarCartaCracker(idPacoteDomOriginal, origem, idItem, ehAliado) {
         dadosNovaCarta = { id: base ? base.id : idPuro, nome: nomeCarta, img: imgAtual, vida: vidaAtual, dano: danoAtual };
     }
 
+    let dadosAnimacaoCracker = prepararInfeccaoCracker(pacoteOriginal);
     pacoteOriginal.remove();
 
     let idMaoHTML = ehAliado ? "mao-j1" : "mao-j2";
@@ -5001,12 +5095,17 @@ function roubarCartaCracker(idPacoteDomOriginal, origem, idItem, ehAliado) {
     let divMao = document.getElementById(idMaoHTML);
     if (divMao) divMao.insertAdjacentHTML('beforeend', htmlDaCarta);
 
+    let pacoteRoubado = document.getElementById("pacote-" + idUnico);
+    if (pacoteRoubado) pacoteRoubado.classList.add("cracker-destino-oculto");
+
     let pacoteItem = document.getElementById("pacote-" + idItem);
     if (pacoteItem) pacoteItem.remove();
 
     let overlay = document.getElementById("overlay-cracker");
     if (overlay) overlay.remove();
     crackerPendente = null;
+
+    if (pacoteRoubado) requestAnimationFrame(() => animarTeleporteCracker(dadosAnimacaoCracker, pacoteRoubado));
 
     narrar(`🃏 Cracker! [${nomeCarta}] foi roubado(a) do ${origem === "campo" ? "campo" : "mão"} do adversário${origem === "campo" ? ", voltando com os atributos originais," : ""} e foi pra mão ${ehAliado ? "aliada" : "do oponente"}!`);
 
@@ -5671,14 +5770,14 @@ function mostrarEfeitoVida(idCarta, tipo) {
     if (!carta) return; // Se a carta não estiver visível (ex: já morreu), aborta o efeito
 
     // Função interna que cria um único coração
-    function gerarCoracao(atraso) {
+    function gerarCoracao(atraso, posicaoXForcada) {
         let coracao = document.createElement("div");
         coracao.innerText = "❤️";
         coracao.classList.add("efeito-coracao");
         
         // Joga um pouquinho para a esquerda ou direita aleatoriamente (entre 15% e 35% da carta)
         // Isso faz o coração nascer mais ou menos em cima do ícone da vida, e não no meio da carta.
-        let posicaoX = Math.random() * 20 + 15;
+        let posicaoX = Number.isFinite(posicaoXForcada) ? posicaoXForcada : Math.random() * 20 + 15;
         coracao.style.left = posicaoX + "%";
         
         // Define se ele espera um pouquinho antes de subir (para o efeito de "recuperou" vida)
@@ -5704,6 +5803,10 @@ function mostrarEfeitoVida(idCarta, tipo) {
         gerarCoracao(0);
         gerarCoracao(0.2);
         gerarCoracao(0.4);
+    } else if (tipo === "plus-life") {
+        // Dois corações separados e levemente alternados, representando o bônus exato de +2.
+        gerarCoracao(0, 20);
+        gerarCoracao(0.14, 35);
     }
 }
 function mostrarEfeitoPerdaVida(idCarta) {

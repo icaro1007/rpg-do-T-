@@ -4544,3 +4544,273 @@ button:active {
     58% { transform: translate(var(--portable-pedaco-x), var(--portable-pedaco-y)) rotate(var(--portable-pedaco-rotacao)) scale(1); opacity: .94; }
     100% { transform: translate(var(--portable-pedaco-x), 17px) rotate(var(--portable-pedaco-rotacao-final)) scale(.62); opacity: 0; }
 }
+
+/* =========================================================
+   REVIVERTA — carta descendo do céu e voltando à partida
+   ========================================================= */
+
+.carta-revivida-descendo {
+    position: relative;
+    z-index: 10048 !important;
+    overflow: visible !important;
+    transform-origin: 50% 100%;
+    will-change: transform, opacity, filter;
+    animation: cartaDescendoReviverta 1.36s cubic-bezier(.2,.02,.18,1) forwards !important;
+}
+
+.luz-chegada-reviverta {
+    position: absolute;
+    z-index: 25;
+    inset: -10px;
+    border-radius: inherit;
+    overflow: visible;
+    pointer-events: none;
+    background: radial-gradient(ellipse at 50% 48%, rgba(255, 255, 231, .42), rgba(173, 235, 255, .14) 48%, transparent 72%);
+    box-shadow: 0 0 19px rgba(207, 247, 255, .82), inset 0 0 15px rgba(255, 255, 236, .52);
+    opacity: 0;
+    animation: luzRevivertaAparecendo 1.3s ease-out forwards;
+}
+
+.luz-chegada-reviverta > span {
+    position: absolute;
+    z-index: -1;
+    left: 50%;
+    bottom: 9px;
+    width: 86%;
+    height: 58vh;
+    transform: translateX(-50%);
+    transform-origin: 50% 100%;
+    clip-path: polygon(42% 0, 58% 0, 100% 100%, 0 100%);
+    background: linear-gradient(to bottom, rgba(247, 255, 255, 0), rgba(224, 250, 255, .32) 48%, rgba(255, 255, 225, .66));
+    filter: blur(2px);
+    opacity: 0;
+    animation: feixeCelesteReviverta 1.12s .08s ease-out forwards;
+}
+
+.luz-chegada-reviverta::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: -13px;
+    width: 112%;
+    height: 25px;
+    border: 3px solid rgba(205, 250, 255, .84);
+    border-radius: 50%;
+    box-shadow: 0 0 10px rgba(230, 255, 255, .92), inset 0 0 8px rgba(255, 248, 191, .56);
+    transform: translateX(-50%) scale(.2);
+    opacity: 0;
+    animation: circuloPousoReviverta .64s .72s ease-out forwards;
+}
+
+.luz-chegada-reviverta > i {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #f9ffff;
+    box-shadow: 0 0 7px #b8efff;
+    opacity: 0;
+    animation: centelhaReviverta 1.02s .35s ease-out forwards;
+}
+
+.luz-chegada-reviverta > i:nth-of-type(1) { --revive-x: -52px; --revive-y: -66px; animation-delay: .28s; }
+.luz-chegada-reviverta > i:nth-of-type(2) { --revive-x: 48px; --revive-y: -54px; animation-delay: .36s; }
+.luz-chegada-reviverta > i:nth-of-type(3) { --revive-x: -61px; --revive-y: 22px; animation-delay: .45s; }
+.luz-chegada-reviverta > i:nth-of-type(4) { --revive-x: 58px; --revive-y: 28px; animation-delay: .53s; }
+.luz-chegada-reviverta > i:nth-of-type(5) { --revive-x: -28px; --revive-y: 62px; animation-delay: .61s; }
+.luz-chegada-reviverta > i:nth-of-type(6) { --revive-x: 31px; --revive-y: 67px; animation-delay: .69s; }
+
+@keyframes cartaDescendoReviverta {
+    0% { transform: translateY(-58vh) rotate(-3deg) scale(.76); opacity: 0; filter: blur(4px) brightness(1.7); }
+    18% { opacity: .72; }
+    62% { transform: translateY(-12px) rotate(1deg) scale(1.035); opacity: 1; filter: blur(0) brightness(1.24); }
+    76% { transform: translateY(6px) rotate(0) scale(.98, .95); filter: brightness(1.12); }
+    88% { transform: translateY(-3px) scale(1.012); }
+    100% { transform: translateY(0) scale(1); opacity: 1; filter: none; }
+}
+
+@keyframes luzRevivertaAparecendo {
+    0% { transform: scale(.55); opacity: 0; }
+    42% { transform: scale(1.03); opacity: .96; }
+    78% { opacity: .82; }
+    100% { transform: scale(1.08); opacity: 0; }
+}
+
+@keyframes feixeCelesteReviverta {
+    0% { transform: translateX(-50%) scaleX(.18); opacity: 0; }
+    34% { transform: translateX(-50%) scaleX(1); opacity: .8; }
+    76% { opacity: .5; }
+    100% { transform: translateX(-50%) scaleX(.72); opacity: 0; }
+}
+
+@keyframes circuloPousoReviverta {
+    0% { transform: translateX(-50%) scale(.15); opacity: 0; }
+    32% { opacity: 1; }
+    100% { transform: translateX(-50%) scale(1.45); opacity: 0; }
+}
+
+@keyframes centelhaReviverta {
+    0% { transform: translate(-50%, -50%) scale(.2); opacity: 0; }
+    28% { opacity: 1; }
+    100% { transform: translate(calc(-50% + var(--revive-x)), calc(-50% + var(--revive-y))) scale(.15); opacity: 0; }
+}
+
+/* =========================================================
+   CRACKER — vírus digital e teleporte da carta roubada
+   ========================================================= */
+
+.eco-carta-infectada-cracker {
+    position: fixed !important;
+    z-index: 10062 !important;
+    box-sizing: border-box !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    pointer-events: none !important;
+    transform-origin: 50% 50%;
+    will-change: transform, opacity, filter, clip-path;
+}
+
+.eco-carta-infectada-cracker.cracker-teleportando {
+    animation: infectarETeleportarCracker 1.02s steps(1, end) forwards !important;
+}
+
+.eco-carta-infectada-cracker::after {
+    content: "";
+    position: absolute;
+    z-index: 29;
+    inset: -3px;
+    border: 2px solid rgba(50, 255, 124, .84);
+    border-radius: inherit;
+    pointer-events: none;
+    background: repeating-linear-gradient(to bottom, rgba(22, 255, 104, .08) 0 2px, transparent 2px 7px);
+    box-shadow: inset 0 0 17px rgba(23, 137, 72, .3), 0 0 11px rgba(37, 255, 118, .58);
+    mix-blend-mode: screen;
+    animation: varreduraVirusCracker .38s linear infinite;
+}
+
+.virus-visual-cracker {
+    position: absolute;
+    z-index: 32;
+    inset: -5px;
+    border-radius: inherit;
+    overflow: hidden;
+    pointer-events: none;
+    color: #61ff8c;
+    font-family: Consolas, monospace;
+    text-shadow: 0 0 5px rgba(33, 255, 111, .92);
+}
+
+.virus-visual-cracker > b {
+    position: absolute;
+    left: 50%;
+    top: 44%;
+    font-size: 35px;
+    line-height: 1;
+    transform: translate(-50%, -50%);
+    opacity: .72;
+    animation: simboloVirusCracker .46s steps(2, end) infinite;
+}
+
+.virus-visual-cracker > span {
+    position: absolute;
+    left: 7px;
+    top: 8px;
+    padding: 2px 4px;
+    color: #9effb8;
+    background: rgba(3, 29, 12, .66);
+    font-size: 10px;
+    letter-spacing: 2px;
+    opacity: .8;
+    animation: codigoVirusCracker .62s steps(3, end) infinite;
+}
+
+.virus-visual-cracker > i {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 6px;
+    height: 6px;
+    border: 1px solid #8effab;
+    background: #1dde62;
+    box-shadow: 0 0 6px #22ff73;
+    opacity: 0;
+    animation: pixelVirusCracker .72s ease-out infinite;
+}
+
+.virus-visual-cracker > i:nth-of-type(1) { --virus-x: -51px; --virus-y: -61px; animation-delay: -.1s; }
+.virus-visual-cracker > i:nth-of-type(2) { --virus-x: 48px; --virus-y: -47px; animation-delay: -.25s; }
+.virus-visual-cracker > i:nth-of-type(3) { --virus-x: -58px; --virus-y: 36px; animation-delay: -.4s; }
+.virus-visual-cracker > i:nth-of-type(4) { --virus-x: 54px; --virus-y: 48px; animation-delay: -.55s; }
+.virus-visual-cracker > i:nth-of-type(5) { --virus-x: -18px; --virus-y: 68px; animation-delay: -.32s; }
+.virus-visual-cracker > i:nth-of-type(6) { --virus-x: 23px; --virus-y: -69px; animation-delay: -.62s; }
+
+.cracker-destino-oculto {
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+
+.carta-reaparecendo-cracker {
+    position: relative;
+    z-index: 10047 !important;
+    overflow: visible !important;
+    animation: reaparecerCartaCracker .88s steps(1, end) forwards !important;
+}
+
+.virus-cracker-no-destino {
+    animation: virusDestinoCracker .88s ease-out forwards;
+}
+
+@keyframes infectarETeleportarCracker {
+    0% { transform: translate(0, 0) scale(1); opacity: 1; filter: none; clip-path: inset(0); }
+    9% { transform: translate(-3px, 1px) skewX(-2deg); filter: hue-rotate(70deg) contrast(1.25); clip-path: inset(7% 0 2% 0); }
+    17% { transform: translate(4px, -1px) skewX(3deg); filter: hue-rotate(105deg) contrast(1.5); clip-path: inset(0 0 18% 0); }
+    26% { transform: translate(-2px, 2px) scale(1.025); opacity: .78; clip-path: inset(14% 0 9% 0); }
+    35% { transform: translate(3px, 0) scale(.98, 1.03); opacity: 1; filter: saturate(1.5) contrast(1.35); clip-path: inset(0); }
+    44% { transform: translate(0, 0) scale(.12, 1.08); opacity: .12; filter: brightness(1.8) hue-rotate(80deg); clip-path: inset(42% 0 43% 0); }
+    45% { transform: translate(var(--cracker-teleporte-x), var(--cracker-teleporte-y)) scale(.1); opacity: 0; clip-path: inset(48% 0); }
+    59% { transform: translate(var(--cracker-teleporte-x), var(--cracker-teleporte-y)) scale(.28, .86); opacity: .72; filter: brightness(1.65) hue-rotate(75deg); clip-path: inset(30% 0 31% 0); }
+    69% { transform: translate(var(--cracker-teleporte-x), var(--cracker-teleporte-y)) scale(.88, 1.03); opacity: .94; clip-path: inset(4% 0); }
+    78% { transform: translate(var(--cracker-teleporte-x), var(--cracker-teleporte-y)) scale(var(--cracker-escala-x), var(--cracker-escala-y)); opacity: .82; filter: contrast(1.45) hue-rotate(65deg); clip-path: inset(0); }
+    88% { transform: translate(var(--cracker-teleporte-x), var(--cracker-teleporte-y)) scale(var(--cracker-escala-x), var(--cracker-escala-y)); opacity: .34; }
+    100% { transform: translate(var(--cracker-teleporte-x), var(--cracker-teleporte-y)) scale(var(--cracker-escala-x), var(--cracker-escala-y)); opacity: 0; filter: brightness(1.35); }
+}
+
+@keyframes varreduraVirusCracker {
+    0% { background-position: 0 -8px; opacity: .45; }
+    50% { opacity: .9; }
+    100% { background-position: 0 8px; opacity: .5; }
+}
+
+@keyframes simboloVirusCracker {
+    0%, 100% { transform: translate(-50%, -50%) scale(.82); opacity: .38; }
+    50% { transform: translate(-50%, -50%) scale(1.08); opacity: .85; }
+}
+
+@keyframes codigoVirusCracker {
+    0% { transform: translateX(0); opacity: .45; }
+    50% { transform: translateX(11px); opacity: .94; }
+    100% { transform: translateX(-3px); opacity: .6; }
+}
+
+@keyframes pixelVirusCracker {
+    0% { transform: translate(-50%, -50%) scale(.15) rotate(0); opacity: 0; }
+    22% { opacity: 1; }
+    100% { transform: translate(calc(-50% + var(--virus-x)), calc(-50% + var(--virus-y))) scale(.55) rotate(90deg); opacity: 0; }
+}
+
+@keyframes reaparecerCartaCracker {
+    0% { transform: scale(.12, .9); opacity: 0; filter: brightness(1.7) hue-rotate(80deg); clip-path: inset(42% 0); }
+    18% { transform: scale(.92, 1.04); opacity: .82; clip-path: inset(5% 0 18% 0); }
+    31% { transform: translateX(-3px) scale(1.02); opacity: 1; filter: contrast(1.45) hue-rotate(65deg); clip-path: inset(16% 0 2% 0); }
+    44% { transform: translateX(3px); clip-path: inset(0 0 21% 0); }
+    58% { transform: translateX(-1px); filter: contrast(1.25) hue-rotate(35deg); clip-path: inset(4% 0); }
+    74% { transform: scale(1.01); opacity: 1; clip-path: inset(0); }
+    100% { transform: scale(1); opacity: 1; filter: none; clip-path: inset(0); }
+}
+
+@keyframes virusDestinoCracker {
+    0%, 42% { opacity: .88; filter: saturate(1.2); }
+    100% { opacity: 0; filter: saturate(.2); }
+}
