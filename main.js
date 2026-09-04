@@ -1135,8 +1135,18 @@ function iniciarJogo() {
     let deckTropaJ1 = []; let deckSuporteJ1 = [];
     let deckTropaJ2 = []; let deckSuporteJ2 = [];
 
+    // A coleção da tela inicial passa a definir quais cartas existem na partida.
+    // No início ficam desbloqueados Guerreiro, Bárbaro, Mago e Escudo. A partida,
+    // porém, continua começando com 5 cartas: cada tipo liberado entra no sorteio
+    // com a quantidade definida em cartas.js (qtd), permitindo cópias na mão.
+    let idsDisponiveis = (typeof window.obterIdsCartasDisponiveisRpg === "function")
+        ? new Set(window.obterIdsCartasDisponiveisRpg())
+        : null;
+
     bancoDeCartas.forEach(carta => {
-        for(let i = 0; i < carta.qtd; i++) {
+        if (idsDisponiveis && !idsDisponiveis.has(carta.id)) return;
+        let quantidadeNoDeck = carta.qtd;
+        for(let i = 0; i < quantidadeNoDeck; i++) {
             let instJ1 = { ...carta, idUnico: carta.id + "_" + i };
             let instJ2 = { ...carta, idUnico: carta.id + "_inimigo_" + i };
             
@@ -1155,11 +1165,21 @@ function iniciarJogo() {
     deckTropaJ2.sort(() => Math.random() - 0.5);
     deckSuporteJ2.sort(() => Math.random() - 0.5);
 
-    maoJ1.push(deckSuporteJ1.pop());
-    for(let i = 0; i < 4; i++) maoJ1.push(deckTropaJ1.pop());
-    
-    maoJ2.push(deckSuporteJ2.pop());
-    for(let i = 0; i < 4; i++) maoJ2.push(deckTropaJ2.pop());
+    function montarMaoInicial(tropas, suportes) {
+        let totalDisponivel = tropas.length + suportes.length;
+        let tamanhoDaMao = Math.min(5, totalDisponivel);
+        let mao = [];
+
+        // Toda batalha começa com pelo menos um suporte, quando houver algum liberado.
+        // As outras posições são preenchidas pelas variações de quantidade das tropas.
+        if (suportes.length > 0) mao.push(suportes.pop());
+        while (mao.length < tamanhoDaMao && tropas.length > 0) mao.push(tropas.pop());
+        while (mao.length < tamanhoDaMao && suportes.length > 0) mao.push(suportes.pop());
+        return mao;
+    }
+
+    maoJ1 = montarMaoInicial(deckTropaJ1, deckSuporteJ1);
+    maoJ2 = montarMaoInicial(deckTropaJ2, deckSuporteJ2);
 
     deckJ1 = [...deckTropaJ1, ...deckSuporteJ1].sort(() => Math.random() - 0.5);
     deckJ2 = [...deckTropaJ2, ...deckSuporteJ2].sort(() => Math.random() - 0.5);
@@ -6238,7 +6258,10 @@ function sincronizarVisuaisVenenoMago() {
 }
 
 window.onload = function() {
-    iniciarJogo();
+    // A nova tela inicial decide quando a partida começa e qual modo será usado.
+    // Mantém o início automático antigo como segurança caso menu.js não esteja carregado.
+    if (typeof window.inicializarTelaInicioRpg === "function") window.inicializarTelaInicioRpg();
+    else iniciarJogo();
     sincronizarVisuaisEscudo();
     sincronizarVisuaisVenenoMago();
     sincronizarVisuaisIncendiario();

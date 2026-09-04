@@ -28,6 +28,11 @@
     // UTILITÁRIOS DE LEITURA DO TABULEIRO
     // -------------------------------------------------------------------
     function estaVezDoBot() {
+        // No PvP local, o segundo lado continua sendo controlado por uma pessoa.
+        // Quando a nova tela inicial está presente, a IA só assume modos contra inimigos.
+        if (typeof window.rpgModoAtual !== "undefined"
+            && window.rpgModoAtual !== "pve-solo"
+            && window.rpgModoAtual !== "pve-dupla") return false;
         return typeof turnoAtivo !== "undefined" && turnoAtivo === 2 &&
                typeof jogoIniciado !== "undefined" && jogoIniciado === true;
     }
@@ -880,6 +885,9 @@
     // FASE DE ABERTURA — escolhe automaticamente a tropa de abertura do bot
     // -------------------------------------------------------------------
     function botEscolherCartaAbertura() {
+        if (typeof window.rpgModoAtual !== "undefined"
+            && window.rpgModoAtual !== "pve-solo"
+            && window.rpgModoAtual !== "pve-dupla") return;
         if (typeof faseAbertura === "undefined" || faseAbertura !== true) return;
         if (typeof aberturaEscolhaJ2 !== "undefined" && aberturaEscolhaJ2 !== null) return; // já escolheu
 

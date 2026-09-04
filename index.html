@@ -4,15 +4,195 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     
-    <title>RPG do T&Í - Arena PvP ⚔️</title>
+    <title>RPG do T&Í - Arena das Eras ⚔️</title>
     
     <link rel="icon" type="image/png" href="icone.png">
     
     <link rel="stylesheet" href="style.css">
 </head>
-<body>
-<div id="container-principal">
-    <h1>RPG do T&Í - Arena PvP</h1> 
+<body class="tela-inicio-ativa">
+<section id="tela-inicio-rpg" aria-label="Tela inicial do RPG do T&Í">
+    <header class="topo-menu-rpg">
+        <div class="marca-rpg">
+            <img src="icone.png" alt="" class="marca-rpg-icone">
+            <div>
+                <span class="marca-rpg-selo">ARENA DAS ERAS</span>
+                <strong>RPG do T&Í</strong>
+            </div>
+        </div>
+
+        <div class="placar-menu-rpg" aria-label="Seu progresso">
+            <div><span aria-hidden="true">🏆</span><strong id="menu-pontos">0</strong><small>Pontos</small></div>
+            <div><span aria-hidden="true">🪙</span><strong id="menu-moedas">0</strong><small>Moedas</small></div>
+        </div>
+    </header>
+
+    <main class="corpo-menu-rpg">
+        <section id="pagina-inicio-rpg" class="pagina-menu-rpg pagina-menu-ativa" data-pagina="inicio">
+            <div class="painel-era-destaque">
+                <div class="era-destaque-texto">
+                    <span class="etiqueta-menu">PROGRESSÃO ATUAL</span>
+                    <h1><button type="button" class="botao-era-destaque" data-pagina-alvo="eras" aria-label="Abrir caminho da era"><span id="menu-titulo-era">Era Medieval</span><small>Ver caminho ›</small></button></h1>
+                    <p id="menu-proxima-recompensa">Guerreiro, Bárbaro, Mago e Escudo já estão liberados.</p>
+                    <div class="barra-progresso-era" role="progressbar" aria-label="Progresso até a próxima carta" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                        <span id="menu-barra-progresso"></span>
+                    </div>
+                    <div class="legenda-progresso"><span id="menu-pontos-atuais">0 pontos</span><span id="menu-pontos-meta">Próxima: 20</span></div>
+                </div>
+                <div class="portal-eras" aria-hidden="true">
+                    <div class="portal-era portal-medieval portal-ativo"><span>🏰</span><small>Medieval</small></div>
+                    <div class="trilha-portal"></div>
+                    <div class="portal-era portal-moderna"><span>⚙️</span><small>Moderna</small></div>
+                    <div class="trilha-portal"></div>
+                    <div class="portal-era portal-contemporanea"><span>💻</span><small>Contemporânea</small></div>
+                </div>
+            </div>
+
+            <section class="atalhos-baus-rpg" aria-labelledby="titulo-baus-inicio-rpg">
+                <div class="cabecalho-baus-inicio-rpg">
+                    <div>
+                        <span class="etiqueta-menu">RECOMPENSAS DE VITÓRIA</span>
+                        <h2 id="titulo-baus-inicio-rpg">Seus quatro espaços de baú</h2>
+                    </div>
+                    <p id="texto-baus-inicio-rpg">Você ainda pode conquistar 4 baús hoje.</p>
+                </div>
+                <div class="grade-slots-baus-rpg" aria-label="Baús disponíveis">
+                    <button type="button" class="slot-bau-rpg" data-slot-bau="0"><img src="bau-recompensa.png" alt=""><small>Vazio</small></button>
+                    <button type="button" class="slot-bau-rpg" data-slot-bau="1"><img src="bau-recompensa.png" alt=""><small>Vazio</small></button>
+                    <button type="button" class="slot-bau-rpg" data-slot-bau="2"><img src="bau-recompensa.png" alt=""><small>Vazio</small></button>
+                    <button type="button" class="slot-bau-rpg" data-slot-bau="3"><img src="bau-recompensa.png" alt=""><small>Vazio</small></button>
+                </div>
+                <p id="mensagem-baus-inicio-rpg" class="mensagem-baus-inicio-rpg" aria-live="polite"></p>
+            </section>
+
+            <div class="cabecalho-secao-menu">
+                <div><span class="etiqueta-menu">ESCOLHA A BATALHA</span><h2>Modos de jogo</h2></div>
+                <p>A coleção começa com Guerreiro, Bárbaro, Mago e Escudo. A batalha usa 5 cartas sorteadas pelas quantidades de cada tipo.</p>
+            </div>
+
+            <div class="grade-modos-rpg">
+                <article class="modo-rpg modo-pvp">
+                    <span class="modo-rpg-icone" aria-hidden="true">⚔️</span>
+                    <div class="modo-rpg-conteudo">
+                        <span class="modo-rpg-tipo">DUELO LOCAL</span>
+                        <h3>Player vs Player</h3>
+                        <p>Dois jogadores no mesmo dispositivo. Atributos são mantidos quando uma carta retorna para a mão.</p>
+                        <ul><li>4 tipos iniciais • mão com 5 cartas</li><li>Ao menos 1 suporte na mão</li><li>Vitória: +10 pontos • Derrota: -5 pontos</li></ul>
+                    </div>
+                    <button type="button" class="btn-jogar-modo" data-modo="pvp">Jogar PvP</button>
+                </article>
+
+                <article class="modo-rpg modo-pve">
+                    <span class="modo-rpg-icone" aria-hidden="true">👹</span>
+                    <div class="modo-rpg-conteudo">
+                        <span class="modo-rpg-tipo">CAÇADA SOLO</span>
+                        <h3>Player vs Inimigo — 1v1</h3>
+                        <p>Enfrente as cartas controladas pelo inimigo. A dificuldade cresce conforme as derrotas dele.</p>
+                        <ul><li>Oponente automático</li><li>Derrote todas as cartas do monstro</li></ul>
+                    </div>
+                    <button type="button" class="btn-jogar-modo btn-jogar-principal" data-modo="pve-solo">Jogar 1v1</button>
+                </article>
+
+                <article class="modo-rpg modo-dupla">
+                    <span class="modo-rpg-icone" aria-hidden="true">🛡️</span>
+                    <div class="modo-rpg-conteudo">
+                        <span class="modo-rpg-tipo">CAÇADA EM DUPLA</span>
+                        <h3>Players vs Inimigo — 2v1</h3>
+                        <p>Dois aliados contra um monstro com 10 cartas, capaz de jogar duas cartas a cada derrota.</p>
+                        <ul><li>10 cartas para o monstro</li><li>Dois jogadores aliados</li></ul>
+                    </div>
+                    <button type="button" class="btn-jogar-modo" data-modo="pve-dupla" disabled>Em desenvolvimento</button>
+                </article>
+            </div>
+        </section>
+
+        <section id="pagina-eras-rpg" class="pagina-menu-rpg" data-pagina="eras" hidden>
+            <div class="cabecalho-secao-menu cabecalho-pagina-menu">
+                <div><span class="etiqueta-menu">LINHA DO TEMPO</span><h2>Jornada pelas eras</h2></div>
+                <p>Cartas garantidas aparecem em momentos especiais; entre elas, a trilha alterna moedas e baús até o marco final de 2026 pontos.</p>
+            </div>
+            <div id="linha-tempo-eras" class="linha-tempo-eras"></div>
+        </section>
+
+        <section id="pagina-cartas-rpg" class="pagina-menu-rpg" data-pagina="cartas" hidden>
+            <div class="cabecalho-secao-menu cabecalho-pagina-menu">
+                <div><span class="etiqueta-menu">ENCICLOPÉDIA</span><h2>Todas as cartas</h2></div>
+                <p>Clique em uma carta para ampliá-la e ver seus atributos, sua habilidade e como desbloqueá-la.</p>
+            </div>
+            <div class="filtros-colecao-rpg">
+                <label class="busca-cartas-rpg"><span aria-hidden="true">⌕</span><input id="busca-cartas-rpg" type="search" placeholder="Buscar carta..." autocomplete="off"></label>
+                <div class="filtros-era-rpg" role="group" aria-label="Filtrar cartas por era">
+                    <button type="button" class="filtro-era ativo" data-era="todas">Todas</button>
+                    <button type="button" class="filtro-era" data-era="medieval">Medieval</button>
+                    <button type="button" class="filtro-era" data-era="moderna">Moderna</button>
+                    <button type="button" class="filtro-era" data-era="contemporanea">Contemporânea</button>
+                </div>
+            </div>
+            <p id="resultado-colecao-rpg" class="resultado-colecao-rpg" aria-live="polite"></p>
+            <div id="grade-colecao-rpg" class="grade-colecao-rpg"></div>
+        </section>
+
+        <section id="pagina-baus-rpg" class="pagina-menu-rpg" data-pagina="baus" hidden>
+            <div class="cabecalho-secao-menu cabecalho-pagina-menu">
+                <div><span class="etiqueta-menu">RECOMPENSAS</span><h2>Baús de vitória</h2></div>
+                <p>Vitórias 1v1 concedem até 4 baús por dia. Os baús da trilha são extras e podem conter cartas da sua era, repetidas ou moedas.</p>
+            </div>
+            <div class="cofre-baus-rpg">
+                <div class="bau-principal-rpg" aria-hidden="true"><span>📦</span><i></i></div>
+                <div class="cofre-baus-info">
+                    <span class="etiqueta-menu">SEU COFRE</span>
+                    <strong><span id="cofre-quantidade-baus">0</span> baú(s)</strong>
+                    <p id="texto-limite-baus-rpg">Você ainda pode conquistar 4 baús hoje.</p>
+                    <button type="button" id="btn-abrir-bau">Abrir um baú</button>
+                    <span id="mensagem-bau-rpg" class="mensagem-bau-rpg" aria-live="polite"></span>
+                </div>
+            </div>
+            <div class="regras-pontuacao-rpg">
+                <article><span>🏆</span><div><strong>+10 / −5 pontos</strong><p>vitória / derrota no 1v1</p></div></article>
+                <article><span>📦</span><div><strong>Até 4 baús</strong><p>conquistados por dia</p></div></article>
+                <article><span>⌛</span><div><strong>1453 • 1789 • 2026</strong><p>marcos finais das eras</p></div></article>
+            </div>
+        </section>
+
+        <section id="pagina-loja-rpg" class="pagina-menu-rpg" data-pagina="loja" hidden>
+            <div class="cabecalho-secao-menu cabecalho-pagina-menu">
+                <div><span class="etiqueta-menu">MERCADO DIÁRIO</span><h2>Loja da arena</h2></div>
+                <p>Seis ofertas por dia: presente grátis, cópia de carta descoberta, baús das três eras e Baú Supremo.</p>
+            </div>
+            <div id="grade-loja-rpg" class="grade-loja-rpg"></div>
+            <p id="mensagem-loja-rpg" class="mensagem-loja-rpg" aria-live="polite"></p>
+            <section class="troca-repetidas-rpg" aria-labelledby="titulo-troca-repetidas-rpg">
+                <div>
+                    <span class="etiqueta-menu">CARTAS REPETIDAS</span>
+                    <h3 id="titulo-troca-repetidas-rpg">Troque 3 cópias extras por uma carta nova</h3>
+                    <p>A cópia principal permanece na coleção. A nova carta será de uma era já alcançada.</p>
+                </div>
+                <div id="lista-trocas-rpg" class="lista-trocas-rpg"></div>
+                <p id="mensagem-troca-rpg" class="mensagem-troca-rpg" aria-live="polite"></p>
+            </section>
+        </section>
+    </main>
+
+    <div id="modal-carta-rpg" class="modal-carta-rpg" role="dialog" aria-modal="true" aria-labelledby="titulo-modal-carta-rpg" hidden>
+        <article class="modal-carta-conteudo-rpg">
+            <button type="button" id="fechar-modal-carta-rpg" class="fechar-modal-carta-rpg" aria-label="Fechar detalhes da carta">×</button>
+            <div id="conteudo-modal-carta-rpg"></div>
+        </article>
+    </div>
+
+    <nav class="navegacao-menu-rpg" aria-label="Navegação da tela inicial">
+        <button type="button" data-pagina-alvo="cartas"><span aria-hidden="true">▣</span>Cartas</button>
+        <button type="button" class="nav-menu-ativo" data-pagina-alvo="inicio"><span aria-hidden="true">⌂</span>Início</button>
+        <button type="button" data-pagina-alvo="loja"><span aria-hidden="true">🛒</span>Loja</button>
+    </nav>
+</section>
+
+<div id="container-principal" class="arena-rpg arena-oculta" aria-hidden="true">
+    <div class="barra-partida-rpg">
+        <button type="button" id="btn-voltar-menu-rpg" aria-label="Voltar à tela inicial">← Menu</button>
+        <div><small>Modo atual</small><strong id="nome-modo-partida">Arena</strong></div>
+    </div>
+    <h1>RPG do T&Í - Arena de Batalha</h1> 
 
     <div id="mao-j2">
         <h3>Mão do Oponente</h3>
@@ -44,6 +224,7 @@
     <script src="cartas.js"></script>
     <script src="habilidades.js"></script>
     <script src="main.js"></script>
+    <script src="menu.js"></script>
     <script src="bot.js"></script>
 </body>
 </html>
