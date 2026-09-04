@@ -4525,6 +4525,50 @@ function animarFacadaTraicao(idCartaTraidora, idCartaVitima) {
     }, 1300);
 }
 
+// ⚡ AUVEX — um raio curto cai exatamente sobre a tropa que recebeu o +1 permanente.
+// O elemento fica preso à tela (e não altera o tamanho/posição da carta) e é removido
+// assim que a animação termina.
+function animarRaioAuvex(idAlvo) {
+    let pacoteAlvo = document.getElementById("pacote-" + idAlvo) || document.getElementById(idAlvo);
+    if (!pacoteAlvo) return;
+
+    let rect = pacoteAlvo.getBoundingClientRect();
+    let centroX = rect.left + rect.width / 2;
+    let impactoY = rect.top + Math.min(rect.height * 0.42, 72);
+    let inicioY = Math.max(4, impactoY - 145);
+
+    let raio = document.createElement("div");
+    raio.className = "raio-auvex-caindo";
+    raio.setAttribute("aria-hidden", "true");
+    raio.style.left = centroX + "px";
+    raio.style.top = inicioY + "px";
+    raio.style.setProperty("--auvex-queda", (impactoY - inicioY) + "px");
+    raio.innerHTML = "<span>⚡</span>";
+
+    let impacto = document.createElement("div");
+    impacto.className = "impacto-raio-auvex";
+    impacto.setAttribute("aria-hidden", "true");
+    impacto.style.left = centroX + "px";
+    impacto.style.top = impactoY + "px";
+    impacto.innerHTML = "<i></i><i></i><i></i><i></i>";
+
+    document.body.appendChild(raio);
+    document.body.appendChild(impacto);
+
+    pacoteAlvo.classList.remove("auvex-impactada");
+    void pacoteAlvo.offsetWidth;
+    pacoteAlvo.classList.add("auvex-impactada");
+
+    // A espada aparece no instante do impacto, ligando visualmente o raio ao +1 de dano.
+    setTimeout(() => mostrarEfeitoAtaque(idAlvo), 330);
+
+    setTimeout(() => {
+        raio.remove();
+        impacto.remove();
+        if (pacoteAlvo.isConnected) pacoteAlvo.classList.remove("auvex-impactada");
+    }, 1050);
+}
+
 function equiparSuporte(idAlvo) {
     if (!suportePreparado) return; 
 
@@ -4608,7 +4652,7 @@ function equiparSuporte(idAlvo) {
 
         itemNaMaoAuvex.remove();
 
-        mostrarEfeitoAtaque(idAlvo);
+        animarRaioAuvex(idAlvo);
 
         narrar(`⚡ Auvex equipada em [${nomeAlvo}]! O dano subiu pra ${danoAtual + 1}, de forma PERMANENTE.`);
         suportePreparado = null;
@@ -5152,6 +5196,12 @@ function usarAllsforms(idItem, ehAliado) {
 
         if (!buffsAllsforms[idPuro]) buffsAllsforms[idPuro] = [];
         buffsAllsforms[idPuro].push({ bonus: 3, restam: 2 }); // 1 rodada = 2 passagens de turno
+
+        // ⚔️ ALLSFORMS: três espadas, uma para cada ponto do bônus de +3.
+        // As posições são fixas para os ícones não nascerem em cima uns dos outros.
+        [60, 72, 84].forEach((posicaoX, indice) => {
+            setTimeout(() => mostrarEfeitoAtaque(idPuro, posicaoX), indice * 120);
+        });
     });
 
     let pacoteItem = document.getElementById("pacote-" + idItem);
@@ -5272,9 +5322,80 @@ function mostrarDupliquetion(idItem, ehAliado) {
     document.body.appendChild(overlay);
 }
 
+// 🪞 DUPLIQUETION — guarda uma silhueta visual da carta antes de a nova cópia alterar
+// o espaço da mão. IDs, botões e cliques são retirados para o eco nunca interferir no jogo.
+function prepararEcoDupliquetion(pacoteOriginal) {
+    if (!pacoteOriginal) return null;
+
+    let rect = pacoteOriginal.getBoundingClientRect();
+    let eco = pacoteOriginal.cloneNode(true);
+    eco.removeAttribute("id");
+    eco.querySelectorAll("[id]").forEach(elemento => elemento.removeAttribute("id"));
+    eco.querySelectorAll("button").forEach(botao => botao.remove());
+    eco.querySelectorAll("[onclick]").forEach(elemento => elemento.removeAttribute("onclick"));
+    eco.className = pacoteOriginal.className + " eco-magico-dupliquetion";
+    eco.style.left = rect.left + "px";
+    eco.style.top = rect.top + "px";
+    eco.style.width = rect.width + "px";
+    eco.style.height = rect.height + "px";
+
+    let magia = document.createElement("div");
+    magia.className = "magia-dupliquetion";
+    magia.setAttribute("aria-hidden", "true");
+    magia.innerHTML = "<b>✦</b><i></i><i></i><i></i><i></i>";
+    eco.appendChild(magia);
+    document.body.appendChild(eco);
+
+    return { eco, rect };
+}
+
+function animarCopiaDupliquetion(dadosEco, pacoteCopia) {
+    if (!dadosEco || !dadosEco.eco || !pacoteCopia) {
+        if (pacoteCopia) pacoteCopia.classList.remove("dupliquetion-destino-oculto");
+        return;
+    }
+
+    let eco = dadosEco.eco;
+    let origem = dadosEco.rect;
+    let destino = pacoteCopia.getBoundingClientRect();
+    let origemX = origem.left + origem.width / 2;
+    let origemY = origem.top + origem.height / 2;
+    let destinoX = destino.left + destino.width / 2;
+    let destinoY = destino.top + destino.height / 2;
+
+    pacoteCopia.classList.add("dupliquetion-destino-oculto");
+    eco.style.setProperty("--dupliquetion-x", (destinoX - origemX) + "px");
+    eco.style.setProperty("--dupliquetion-y", (destinoY - origemY) + "px");
+    eco.style.setProperty("--dupliquetion-escala-x", destino.width / Math.max(origem.width, 1));
+    eco.style.setProperty("--dupliquetion-escala-y", destino.height / Math.max(origem.height, 1));
+
+    requestAnimationFrame(() => eco.classList.add("dupliquetion-viajando"));
+
+    setTimeout(() => {
+        eco.remove();
+        if (!pacoteCopia.isConnected) return;
+
+        pacoteCopia.classList.remove("dupliquetion-destino-oculto");
+        pacoteCopia.classList.add("carta-materializando-dupliquetion");
+
+        let brilho = document.createElement("div");
+        brilho.className = "brilho-chegada-dupliquetion";
+        brilho.setAttribute("aria-hidden", "true");
+        brilho.innerHTML = "<b>✦</b><i></i><i></i><i></i><i></i>";
+        pacoteCopia.appendChild(brilho);
+
+        setTimeout(() => {
+            if (brilho.parentNode) brilho.remove();
+            if (pacoteCopia.isConnected) pacoteCopia.classList.remove("carta-materializando-dupliquetion");
+        }, 880);
+    }, 940);
+}
+
 function copiarCartaDupliquetion(idPacoteOriginal, idItem, ehAliado) {
     let pacoteOriginal = document.getElementById(idPacoteOriginal);
     if (!pacoteOriginal) return;
+
+    let dadosAnimacaoDupliquetion = prepararEcoDupliquetion(pacoteOriginal);
 
     let idPuro = idPacoteOriginal.replace("pacote-", "");
     let nomeCarta = pacoteOriginal.querySelector(".nome-carta").innerText.trim();
@@ -5300,12 +5421,18 @@ function copiarCartaDupliquetion(idPacoteOriginal, idItem, ehAliado) {
     let divMao = document.getElementById(idMaoHTML);
     if (divMao) divMao.insertAdjacentHTML('beforeend', htmlDaCarta);
 
+    let pacoteCopia = document.getElementById("pacote-" + idUnico);
+    if (pacoteCopia) pacoteCopia.classList.add("dupliquetion-destino-oculto");
+
     let pacoteItem = document.getElementById("pacote-" + idItem);
     if (pacoteItem) pacoteItem.remove();
 
     let overlay = document.getElementById("overlay-dupliquetion");
     if (overlay) overlay.remove();
     dupliquetionPendente = null;
+
+    if (pacoteCopia) requestAnimationFrame(() => animarCopiaDupliquetion(dadosAnimacaoDupliquetion, pacoteCopia));
+    else if (dadosAnimacaoDupliquetion && dadosAnimacaoDupliquetion.eco) dadosAnimacaoDupliquetion.eco.remove();
 
     narrar(`🪞 Dupliquetion! Uma cópia de [${nomeCarta}] nasceu com metade da vida e do dano (❤️${vidaCopia} ⚔️${danoCopia}) na mão ${ehAliado ? "aliada" : "do oponente"}!`);
 }
@@ -5830,7 +5957,7 @@ function mostrarEfeitoPerdaVida(idCarta) {
         }
     }, 1200);
 }
-function mostrarEfeitoAtaque(idCarta) {
+function mostrarEfeitoAtaque(idCarta, posicaoXForcada) {
     let carta = document.getElementById("pacote-" + idCarta) || document.getElementById(idCarta);
     if (!carta) return;
 
@@ -5839,7 +5966,7 @@ function mostrarEfeitoAtaque(idCarta) {
     espada.classList.add("efeito-ataque");
     
     // 🚨 Diferença: Joga mais para a DIREITA (entre 65% e 85%), onde fica o status de ataque!
-    let posicaoX = Math.random() * 20 + 65; 
+    let posicaoX = Number.isFinite(posicaoXForcada) ? posicaoXForcada : Math.random() * 20 + 65; 
     espada.style.left = posicaoX + "%";
 
     carta.appendChild(espada);

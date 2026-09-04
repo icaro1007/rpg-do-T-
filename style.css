@@ -4814,3 +4814,229 @@ button:active {
     0%, 42% { opacity: .88; filter: saturate(1.2); }
     100% { opacity: 0; filter: saturate(.2); }
 }
+
+/* =========================================================
+   AUVEX — raio curto, impacto e +1 de ataque
+   ========================================================= */
+
+.raio-auvex-caindo {
+    position: fixed;
+    z-index: 10070;
+    width: 32px;
+    height: calc(var(--auvex-queda) + 24px);
+    margin-left: -16px;
+    pointer-events: none;
+    overflow: visible;
+}
+
+.raio-auvex-caindo::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 0;
+    width: 3px;
+    height: var(--auvex-queda);
+    border-radius: 999px;
+    background: linear-gradient(to bottom, rgba(255,255,255,0), #dffbff 35%, #66d8ff 76%, #fff7a7);
+    box-shadow: 0 0 5px #a8edff, 0 0 10px rgba(70, 186, 255, .76);
+    transform: translateX(-50%) scaleY(0);
+    transform-origin: 50% 0;
+    opacity: 0;
+    animation: feixeRaioAuvex .46s ease-in forwards;
+}
+
+.raio-auvex-caindo > span {
+    position: absolute;
+    left: 50%;
+    top: -17px;
+    font-size: 31px;
+    line-height: 1;
+    color: #fff16b;
+    filter: drop-shadow(0 0 5px #68dfff);
+    opacity: 0;
+    animation: quedaRaioAuvex .48s cubic-bezier(.38,.02,.28,1) forwards;
+}
+
+.impacto-raio-auvex {
+    position: fixed;
+    z-index: 10071;
+    width: 54px;
+    height: 26px;
+    margin: -13px 0 0 -27px;
+    border: 2px solid rgba(153, 238, 255, .88);
+    border-radius: 50%;
+    pointer-events: none;
+    opacity: 0;
+    animation: impactoAuvex .68s .28s ease-out forwards;
+}
+
+.impacto-raio-auvex > i {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 15px;
+    height: 3px;
+    border-radius: 999px;
+    background: #f9f39a;
+    box-shadow: 0 0 5px #79ddff;
+    transform-origin: 0 50%;
+}
+
+.impacto-raio-auvex > i:nth-child(1) { transform: rotate(18deg) translateX(20px); }
+.impacto-raio-auvex > i:nth-child(2) { transform: rotate(116deg) translateX(18px); }
+.impacto-raio-auvex > i:nth-child(3) { transform: rotate(198deg) translateX(20px); }
+.impacto-raio-auvex > i:nth-child(4) { transform: rotate(296deg) translateX(18px); }
+
+.auvex-impactada {
+    animation: pulsoEletricoAuvex .78s .28s ease-out !important;
+}
+
+@keyframes feixeRaioAuvex {
+    0% { transform: translateX(-50%) scaleY(0); opacity: 0; }
+    15% { opacity: 1; }
+    70% { transform: translateX(-50%) scaleY(1); opacity: .96; }
+    100% { transform: translateX(-50%) scaleY(1); opacity: 0; }
+}
+
+@keyframes quedaRaioAuvex {
+    0% { transform: translate(-50%, 0) scale(.35) rotate(-8deg); opacity: 0; }
+    12% { opacity: 1; }
+    72% { transform: translate(-50%, var(--auvex-queda)) scale(1) rotate(3deg); opacity: 1; }
+    100% { transform: translate(-50%, var(--auvex-queda)) scale(.6); opacity: 0; }
+}
+
+@keyframes impactoAuvex {
+    0% { transform: scale(.15); opacity: 0; }
+    26% { transform: scale(.82); opacity: 1; }
+    100% { transform: scale(1.65); opacity: 0; }
+}
+
+@keyframes pulsoEletricoAuvex {
+    0%, 100% { transform: translate(0, 0); filter: none; }
+    36% { transform: translate(-1px, 1px) scale(1.018); filter: brightness(1.18) drop-shadow(0 0 6px #73dbff); }
+    48% { transform: translate(2px, -1px) scale(1.01); }
+    60% { transform: translate(-1px, 0); }
+}
+
+/* =========================================================
+   DUPLIQUETION — silhueta mágica viajando e virando cópia
+   ========================================================= */
+
+.eco-magico-dupliquetion {
+    position: fixed !important;
+    z-index: 10066 !important;
+    box-sizing: border-box !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    pointer-events: none !important;
+    transform-origin: 50% 50%;
+    opacity: .72;
+    filter: hue-rotate(28deg) saturate(1.45) brightness(1.16);
+    box-shadow: 0 0 13px rgba(151, 96, 255, .78), inset 0 0 15px rgba(112, 232, 255, .28) !important;
+}
+
+.eco-magico-dupliquetion::after {
+    content: "";
+    position: absolute;
+    z-index: 28;
+    inset: -4px;
+    border: 2px solid rgba(193, 153, 255, .7);
+    border-radius: inherit;
+    box-shadow: 0 0 9px rgba(116, 230, 255, .7);
+    opacity: .78;
+}
+
+.eco-magico-dupliquetion.dupliquetion-viajando {
+    animation: ecoViajandoDupliquetion .94s cubic-bezier(.28,.02,.2,1) forwards !important;
+}
+
+.magia-dupliquetion,
+.brilho-chegada-dupliquetion {
+    position: absolute;
+    z-index: 31;
+    inset: -7px;
+    border-radius: inherit;
+    overflow: visible;
+    pointer-events: none;
+}
+
+.magia-dupliquetion > b,
+.brilho-chegada-dupliquetion > b {
+    position: absolute;
+    left: 50%;
+    top: 48%;
+    color: #d9c2ff;
+    font-size: 32px;
+    line-height: 1;
+    text-shadow: 0 0 8px #77e8ff;
+    transform: translate(-50%, -50%);
+    animation: simboloDupliquetion .76s ease-in-out infinite alternate;
+}
+
+.magia-dupliquetion > i,
+.brilho-chegada-dupliquetion > i {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #e8ddff;
+    box-shadow: 0 0 6px #74e8ff;
+    opacity: 0;
+    animation: particulaDupliquetion .78s ease-out infinite;
+}
+
+.magia-dupliquetion > i:nth-of-type(1), .brilho-chegada-dupliquetion > i:nth-of-type(1) { --dup-part-x: -48px; --dup-part-y: -54px; animation-delay: -.12s; }
+.magia-dupliquetion > i:nth-of-type(2), .brilho-chegada-dupliquetion > i:nth-of-type(2) { --dup-part-x: 47px; --dup-part-y: -43px; animation-delay: -.3s; }
+.magia-dupliquetion > i:nth-of-type(3), .brilho-chegada-dupliquetion > i:nth-of-type(3) { --dup-part-x: -52px; --dup-part-y: 47px; animation-delay: -.48s; }
+.magia-dupliquetion > i:nth-of-type(4), .brilho-chegada-dupliquetion > i:nth-of-type(4) { --dup-part-x: 51px; --dup-part-y: 51px; animation-delay: -.66s; }
+
+.dupliquetion-destino-oculto {
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+
+.carta-materializando-dupliquetion {
+    position: relative;
+    z-index: 10047 !important;
+    overflow: visible !important;
+    animation: materializarCartaDupliquetion .82s ease-out forwards !important;
+}
+
+.brilho-chegada-dupliquetion {
+    background: radial-gradient(ellipse at center, rgba(207, 178, 255, .34), rgba(107, 228, 255, .12) 52%, transparent 72%);
+    box-shadow: 0 0 16px rgba(151, 99, 255, .74), inset 0 0 12px rgba(116, 235, 255, .38);
+    animation: brilhoChegadaDupliquetion .82s ease-out forwards;
+}
+
+@keyframes ecoViajandoDupliquetion {
+    0% { transform: translate(0, 0) scale(1); opacity: .72; }
+    20% { transform: translate(0, -8px) scale(1.04); opacity: .92; filter: hue-rotate(35deg) saturate(1.7) brightness(1.25); }
+    68% { transform: translate(var(--dupliquetion-x), var(--dupliquetion-y)) scale(var(--dupliquetion-escala-x), var(--dupliquetion-escala-y)); opacity: .82; }
+    100% { transform: translate(var(--dupliquetion-x), var(--dupliquetion-y)) scale(var(--dupliquetion-escala-x), var(--dupliquetion-escala-y)); opacity: 0; filter: hue-rotate(55deg) brightness(1.65) blur(1px); }
+}
+
+@keyframes simboloDupliquetion {
+    0% { transform: translate(-50%, -50%) rotate(-8deg) scale(.78); opacity: .55; }
+    100% { transform: translate(-50%, -50%) rotate(9deg) scale(1.08); opacity: .96; }
+}
+
+@keyframes particulaDupliquetion {
+    0% { transform: translate(-50%, -50%) scale(.15); opacity: 0; }
+    26% { opacity: 1; }
+    100% { transform: translate(calc(-50% + var(--dup-part-x)), calc(-50% + var(--dup-part-y))) scale(.2); opacity: 0; }
+}
+
+@keyframes materializarCartaDupliquetion {
+    0% { transform: scale(.42); opacity: 0; filter: brightness(1.7) hue-rotate(38deg); }
+    42% { transform: scale(1.045); opacity: 1; filter: brightness(1.2) hue-rotate(22deg); }
+    72% { transform: scale(.985); }
+    100% { transform: scale(1); opacity: 1; filter: none; }
+}
+
+@keyframes brilhoChegadaDupliquetion {
+    0% { transform: scale(.3); opacity: 0; }
+    34% { transform: scale(1); opacity: .95; }
+    100% { transform: scale(1.18); opacity: 0; }
+}
