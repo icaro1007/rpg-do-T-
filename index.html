@@ -93,13 +93,24 @@
                     <button type="button" class="btn-jogar-modo btn-jogar-principal" data-modo="pve-solo">Jogar 1v1</button>
                 </article>
 
+                <article class="modo-rpg modo-invasao">
+                    <span class="modo-rpg-icone" aria-hidden="true">🌊</span>
+                    <div class="modo-rpg-conteudo">
+                        <span class="modo-rpg-tipo">INVASÃO SOLO</span>
+                        <h3>Player vs Monstro — Ondas</h3>
+                        <p>O monstro começa com um Slime grande. Ao derrotar uma onda inteira, a próxima recebe mais um inimigo.</p>
+                        <ul><li>5 famílias de Slimes: ondas de 1, 2 e 2</li><li>Cada Slime se divide até chegar a quatro unidades</li></ul>
+                    </div>
+                    <button type="button" class="btn-jogar-modo btn-jogar-principal" data-modo="pve-monstro-solo">Enfrentar ondas</button>
+                </article>
+
                 <article class="modo-rpg modo-dupla">
                     <span class="modo-rpg-icone" aria-hidden="true">🛡️</span>
                     <div class="modo-rpg-conteudo">
                         <span class="modo-rpg-tipo">CAÇADA EM DUPLA</span>
                         <h3>Players vs Inimigo — 2v1</h3>
-                        <p>Dois aliados contra um monstro com 10 cartas, capaz de jogar duas cartas a cada derrota.</p>
-                        <ul><li>10 cartas para o monstro</li><li>Dois jogadores aliados</li></ul>
+                        <p>Dois aliados contra um monstro com 10 cartas. Começa com 2 inimigos e aumenta a onda em mais 2.</p>
+                        <ul><li>Ondas planejadas: 2, 4 e 4 cartas</li><li>Dois jogadores aliados</li></ul>
                     </div>
                     <button type="button" class="btn-jogar-modo" data-modo="pve-dupla" disabled>Em desenvolvimento</button>
                 </article>
@@ -224,6 +235,7 @@
     <script src="cartas.js"></script>
     <script src="habilidades.js"></script>
     <script src="main.js"></script>
+    <script src="modo-inimigo.js"></script>
     <script src="menu.js"></script>
     <script src="bot.js"></script>
 </body>

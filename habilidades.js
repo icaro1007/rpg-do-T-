@@ -221,12 +221,69 @@ function aplicarCuraInimiga(idDoPacote) {
     atualizarTodosUnidoes();
 }
 
+function cartaTemEspecialCopiavelCtrl(nomeCarta) {
+    if (!nomeCarta) return false;
+
+    return nomeCarta === "Poção de Gelo"
+        || nomeCarta === "Gelo"
+        || nomeCarta === "Pocaogelo"
+        || nomeCarta === "Bruxo"
+        || nomeCarta === "Necromante"
+        || nomeCarta === "Ork"
+        || nomeCarta === "Curandeiro"
+        || nomeCarta === "Cavaleiro das Trevas"
+        || nomeCarta === "Goblin"
+        || nomeCarta === "Trio de Goblin"
+        || nomeCarta.includes("Barril de Goblin")
+        || nomeCarta === "Guerreiro"
+        || nomeCarta.includes("Barril de Bárbaro")
+        || nomeCarta === "Barril"
+        || nomeCarta === "Bumerskeleton"
+        || nomeCarta === "Mensageiro"
+        || nomeCarta === "Criador"
+        || nomeCarta === "Separado"
+        || nomeCarta === "Separadois"
+        || nomeCarta === "Viajante do Tempo"
+        || nomeCarta === "Incendiário"
+        || nomeCarta === "Mago";
+}
+
+function rolarEspecialDeDanoCtrl(nomeCtrl, idUnico, nomeCopiado, atraso) {
+    setTimeout(() => {
+        let dadoBonus = Math.floor(Math.random() * 6) + 1;
+        let dadoTela = document.getElementById("dado-tela");
+
+        if (dadoTela) {
+            dadoTela.style.animation = "none";
+            setTimeout(() => dadoTela.style.animation = "", 10);
+            dadoTela.innerText = "🎲 " + dadoBonus;
+        }
+
+        if (dadoBonus === 3) {
+            let elemDano = document.getElementById("dano-" + idUnico);
+            if (!elemDano) return;
+            let danoAtual = parseFloat(elemDano.innerText) || 0;
+            elemDano.innerText = danoAtual + 1;
+            mostrarEfeitoAtaque(idUnico);
+            if (typeof atualizarTodosUnidoes === "function") atualizarTodosUnidoes();
+            narrar(`🎯 O Especial do ${nomeCtrl} tirou 3! Como [${nomeCopiado}] não possui Especial, o Ctrl ganhou +1 de Dano permanentemente!`);
+        } else {
+            narrar(`🎲 O Especial do ${nomeCtrl} tirou ${dadoBonus}. Como precisava tirar 3, não ganhou o +1 de Dano.`);
+        }
+    }, atraso);
+}
+
 function usarHabilidade(nome, idUnico, botao, aoConcluir) {
     // 🆕 aoConcluir: callback opcional chamado com (sucesso: boolean) quando o resultado do
     // dado desta habilidade for conhecido (pode ser na hora ou depois de um setTimeout).
     // Usado pelo Ctrl C/V pra saber se a habilidade copiada deu certo antes de rolar o bônus.
     let notificar = function (sucesso) { if (typeof aoConcluir === "function") aoConcluir(sucesso); };
     let dadoTela = document.getElementById("dado-tela");
+    if (typeof cartaSilenciadaPeloEcto === "function" && cartaSilenciadaPeloEcto(idUnico)) {
+        narrar("👻 O Ecto removeu permanentemente a habilidade desta carta. Ela só pode usar o ataque comum.");
+        notificar(false);
+        return;
+    }
 
     /// 🎭 CRIADOR (ÍCARO / THIAGO) — 2 usos únicos em sequência:
     /// 1º clique: rola o dado e vira Ícaro (1-3) ou Thiago (4-6).
@@ -328,16 +385,25 @@ function usarHabilidade(nome, idUnico, botao, aoConcluir) {
             return narrar(`❌ ${nome} não tem uma parceira viva em campo pra usar essa habilidade!`);
         }
 
-        let dado = Math.floor(Math.random() * 6) + 1;
+        let especialJaFixo = typeof especialFixoSeparado !== 'undefined'
+            && especialFixoSeparado[idUnico] === true;
+        let dado = especialJaFixo ? 6 : (Math.floor(Math.random() * 6) + 1);
         document.getElementById("dado-tela").innerText = "🎲 " + dado;
         if (botao) botao.style.display = 'none'; // uso único, vale a tentativa mesmo se não der 6
 
         if (dado === 6) {
+            if (!especialJaFixo && typeof especialFixoSeparado !== 'undefined') {
+                especialFixoSeparado[idUnico] = true;
+            }
             separadaoDividido[idUnico] = 2; // faltam 2 ataques: o do Separado e o da parceira
+            separadaoAtacantesNaSequencia[idUnico] = [];
             if (typeof animarAtivacaoDivisaoSeparado === "function") {
                 animarAtivacaoDivisaoSeparado(idUnico, idParceira);
             }
-            narrar(`🎲 Tirou 6! Agora é só atacar normalmente: clique em Atacar em ${nome} pra escolher um alvo, e depois em Atacar na parceira pra escolher OUTRO alvo — as duas vão atacar sem se puxar dessa vez, e o turno só passa depois das duas.`);
+            let inicioMensagem = especialJaFixo
+                ? `👥 O Especial permanente de ${nome} já está ativo!`
+                : `🎲 Tirou 6! O Especial de ${nome} agora é permanente!`;
+            narrar(`${inicioMensagem} A partir de agora, em TODAS as rodadas, você pode começar por ${nome} OU pela parceira. Depois, ataque com a outra carta em outro alvo — não será preciso usar o Especial nem rolar o dado novamente.`);
             notificar(true);
         } else {
             narrar(`🎲 Tirou ${dado}. Não deu 6 — a habilidade não ativou dessa vez.`);
@@ -625,6 +691,15 @@ function usarHabilidade(nome, idUnico, botao, aoConcluir) {
         botao.style.display = "none";
         
         let nomeCopiado = dadosCopia.nomeOriginal;
+
+        // Cartas sem Especial ainda deixam o Ctrl usar o próprio Especial:
+        // ele rola o dado e ganha +1 de dano permanente se tirar exatamente 3.
+        if (!cartaTemEspecialCopiavelCtrl(nomeCopiado)) {
+            narrar(`🔮 [${nomeCopiado}] não possui Especial. O ${nome} usará o próprio Especial e precisa tirar 3 para ganhar +1 de Dano.`);
+            rolarEspecialDeDanoCtrl(nome, idUnico, nomeCopiado, 900);
+            return;
+        }
+
         narrar(`🔮 O ${nome} ativou a habilidade copiada de [${nomeCopiado}]!`);
         
         // 🩹 CORREÇÃO: o dado bônus (+1 dano no 3) só deveria rolar SE a habilidade copiada
@@ -858,8 +933,12 @@ if (nome === "Bumerskeleton") {
 
         let alvosAtingidos = alvosDoBumerangue[idUnico]; 
 
-        // Rola o dado
-        let dado = Math.floor(Math.random() * 6) + 1;
+        // Depois que este Bumerskeleton consegue Fogo ou Gelo pela primeira vez,
+        // esse passa a ser o Especial fixo dele pelo restante da partida.
+        let especialJaDefinido = typeof especialFixoBumerskeleton !== "undefined"
+            ? especialFixoBumerskeleton[idUnico]
+            : null;
+        let dado = especialJaDefinido || (Math.floor(Math.random() * 6) + 1);
         
         // Efeito visual no dado da tela
         let dadoTela = document.getElementById("dado-tela");
@@ -869,7 +948,9 @@ if (nome === "Bumerskeleton") {
             dadoTela.innerText = "🎲 " + dado;
         }
 
-        narrar(`🎲 Bumerskeleton rolou o dado e tirou: ${dado}!`);
+        narrar(especialJaDefinido
+            ? `🪃 O Bumerskeleton repetiu seu Especial fixo: ${dado === 3 ? "FOGO" : "GELO"}!`
+            : `🎲 Bumerskeleton rolou o dado e tirou: ${dado}!`);
 
         if (dado === 1) {
             // EFEITO 1: BUMERANGUE VOLTA
@@ -881,11 +962,9 @@ if (nome === "Bumerskeleton") {
                 // Descobre qual é o próximo dano da escala 
                 let danoDoRetorno = tabelaDanoBumerangue[alvosAtingidos.length] || 4; 
                 
-                let txtVida = document.getElementById("vida-" + primeiroAlvo);
-                let vidaAtual = parseFloat(txtVida.innerText);
-                txtVida.innerText = vidaAtual - danoDoRetorno;
-
                 if (typeof mostrarEfeitoPerdaVida === "function") mostrarEfeitoPerdaVida(primeiroAlvo);
+                let alvoEhInimigo = pacoteAlvo.closest("#campo-j2") !== null;
+                aplicarDanoDireto("pacote-" + primeiroAlvo, danoDoRetorno, alvoEhInimigo);
                 
                 narrar(`🪃 O bumerangue fez a curva! Retornou dando ${danoDoRetorno} de DANO na primeira carta! ROLANDO DADO DE NOVO...`);
                 
@@ -900,13 +979,17 @@ if (nome === "Bumerskeleton") {
 
         } else if (dado === 3) {
             // EFEITO 3: FOGO EM TODOS
+            if (!especialJaDefinido && typeof especialFixoBumerskeleton !== "undefined") {
+                especialFixoBumerskeleton[idUnico] = 3;
+                narrar("🔥 O FOGO se tornou o Especial fixo deste Bumerskeleton!");
+            }
             alvosAtingidos.forEach(idAlvo => {
-                let txtVida = document.getElementById("vida-" + idAlvo);
-                if (txtVida) {
+                let pacoteAlvoFogo = document.getElementById("pacote-" + idAlvo);
+                if (pacoteAlvoFogo) {
                     if (typeof ativarFogoVisualBumerskeleton === "function") ativarFogoVisualBumerskeleton(idAlvo);
-                    // 🩹 CORREÇÃO: nunca deixa a vida mostrar número negativo — trava em 0.
-                    txtVida.innerText = Math.max(0, parseFloat(txtVida.innerText) - 0.25);
                     if (typeof mostrarEfeitoPerdaVida === "function") mostrarEfeitoPerdaVida(idAlvo);
+                    let alvoEhInimigo = pacoteAlvoFogo.closest("#campo-j2") !== null;
+                    aplicarDanoDireto("pacote-" + idAlvo, 0.25, alvoEhInimigo);
                 }
             });
             narrar(`🔥 FOGO! O rastro do bumerangue incendiou TODAS as cartas atingidas (-0.25 de vida)!`);
@@ -916,9 +999,19 @@ if (nome === "Bumerskeleton") {
 
        } else if (dado === 5) {
             // GELO EM TODOS
+            if (!especialJaDefinido && typeof especialFixoBumerskeleton !== "undefined") {
+                especialFixoBumerskeleton[idUnico] = 5;
+                narrar("❄️ O GELO se tornou o Especial fixo deste Bumerskeleton!");
+            }
             alvosAtingidos.forEach(idAlvo => {
                 let pacote = document.getElementById("pacote-" + idAlvo);
                 if (pacote) {
+                    let vidaAlvo = document.getElementById("vida-" + idAlvo);
+                    if (!vidaAlvo || parseFloat(vidaAlvo.innerText) <= 0) {
+                        let alvoEhInimigo = pacote.closest("#campo-j2") !== null;
+                        aplicarDanoDireto("pacote-" + idAlvo, 0, alvoEhInimigo);
+                        return;
+                    }
                     pacote.classList.add("congelada"); 
                     pacote.style.filter = "hue-rotate(180deg) brightness(1.2)"; 
                     
@@ -1023,6 +1116,9 @@ function verificarPassivaNecromante(carta, ehAliado) {
 }
 
 function usarPassivaLadrao(idUnico, botao) {
+    if (typeof cartaSilenciadaPeloEcto === "function" && cartaSilenciadaPeloEcto(idUnico)) {
+        return narrar("👻 Esta carta perdeu a Passiva para o Ecto.");
+    }
     let ehAliado = botao.closest('#campo-j1') || botao.closest('#mao-j1');
 
     // 🩹 NOVO: a passiva do Ladrão só pode ser usada 1 vez por turno, por lado (zera em
@@ -1223,6 +1319,9 @@ function aplicarRouboDanoGoblin(idPacoteAlvo) {
 }
 
 function usarPassivaCtrlC(idUnico, botao) {
+    if (typeof cartaSilenciadaPeloEcto === "function" && cartaSilenciadaPeloEcto(idUnico)) {
+        return narrar("👻 Este Ctrl perdeu a Passiva para o Ecto e não pode copiar outra carta.");
+    }
     let pacote = document.getElementById("pacote-" + idUnico);
     if (!pacote) return;
     let ehAliado = pacote.classList.contains("carta-aliada");
@@ -1233,9 +1332,43 @@ function usarPassivaCtrlC(idUnico, botao) {
     if (!cartaAlvo) {
         return narrar("Nenhuma carta válida foi jogada pelo oponente ainda para ser copiada!");
     }
+
+    // A viagem no tempo pode devolver a Passiva do Ctrl. Antes da nova cópia,
+    // desligamos os estados pertencentes à identidade copiada anteriormente,
+    // sem remover a própria carta nem alterar os atributos que a nova cópia
+    // substituirá logo abaixo.
+    if (ctrlV[idUnico]) {
+        if (typeof window.rpgDesvincularCtrlDeFamiliaEspecial === "function") {
+            window.rpgDesvincularCtrlDeFamiliaEspecial(idUnico);
+        }
+        if (typeof cavalosDeTroiaAtivos !== "undefined") delete cavalosDeTroiaAtivos[idUnico];
+        if (typeof portableDuracao !== "undefined") delete portableDuracao[idUnico];
+        if (typeof incendiarioCiclo !== "undefined") delete incendiarioCiclo[idUnico];
+        if (typeof incendiarioAlvos !== "undefined") delete incendiarioAlvos[idUnico];
+        if (typeof incendiarioFasesVisuais !== "undefined") delete incendiarioFasesVisuais[idUnico];
+        if (typeof parceriaSeparado !== "undefined") delete parceriaSeparado[idUnico];
+        if (typeof separadaoDividido !== "undefined") delete separadaoDividido[idUnico];
+        if (typeof separadaoAtacantesNaSequencia !== "undefined") delete separadaoAtacantesNaSequencia[idUnico];
+        if (typeof especialFixoSeparado !== "undefined") delete especialFixoSeparado[idUnico];
+        if (typeof bonusUnidao !== "undefined") delete bonusUnidao[idUnico];
+        if (typeof alvosDoBarril !== "undefined") delete alvosDoBarril[idUnico];
+        if (typeof barrilJaImpactou !== "undefined") delete barrilJaImpactou[idUnico];
+        if (typeof viajantesJaUsaram !== "undefined") delete viajantesJaUsaram[idUnico];
+        if (typeof especialFixoBumerskeleton !== "undefined") delete especialFixoBumerskeleton[idUnico];
+        if (typeof bonusVampi7Sozinho !== "undefined") delete bonusVampi7Sozinho[idUnico];
+        if (typeof alvosDoBumerangue !== "undefined") delete alvosDoBumerangue[idUnico];
+        if (typeof orkBuffado !== "undefined") delete orkBuffado[idUnico];
+        if (typeof cavaleiroAtivado !== "undefined") delete cavaleiroAtivado[idUnico];
+        if (typeof window.mensageirosEmArea !== "undefined") delete window.mensageirosEmArea[idUnico];
+        if (typeof sincronizarVisuaisIncendiario === "function") sincronizarVisuaisIncendiario();
+    }
     
-    let novaVida = Math.max(1, cartaAlvo.vida - 1);
-    let novoDano = Math.max(1, cartaAlvo.dano - 1);
+    let copiandoSlime = cartaAlvo.nome === "Slime";
+    let copiandoSeteNegativo = cartaAlvo.nome === "7 Negativo";
+    // Ao copiar qualquer forma do Slime, o Ctrl usa como base o Slime grande
+    // (10/1) e mantém sua redução normal de 1 ponto: a família começa em 9/1.
+    let novaVida = copiandoSlime ? 9 : Math.max(1, cartaAlvo.vida - 1);
+    let novoDano = copiandoSlime ? 1 : copiandoSeteNegativo ? 0 : Math.max(1, cartaAlvo.dano - 1);
     
     document.getElementById("vida-" + idUnico).innerText = novaVida;
     document.getElementById("dano-" + idUnico).innerText = novoDano;
@@ -1245,11 +1378,39 @@ function usarPassivaCtrlC(idUnico, botao) {
         ehAliado: ehAliado
     };
 
+    if (copiandoSlime && typeof window.rpgRegistrarCtrlComoSlime === "function") {
+        window.rpgRegistrarCtrlComoSlime(idUnico, ehAliado);
+    }
+    if (cartaAlvo.nome === "Esqueleto" && typeof window.rpgRegistrarCtrlComoEsqueleto === "function") {
+        window.rpgRegistrarCtrlComoEsqueleto(idUnico, ehAliado);
+    }
+    if (cartaAlvo.nome === "Zumbi" && typeof window.rpgRegistrarZumbi === "function") {
+        window.rpgRegistrarZumbi(idUnico, ehAliado);
+    }
+    if (cartaAlvo.nome === "Aicer" && typeof window.rpgRegistrarAicer === "function") {
+        window.rpgRegistrarAicer(idUnico, ehAliado);
+    }
+    if (cartaAlvo.nome === "Ecto" && typeof window.rpgRegistrarEcto === "function") {
+        window.rpgRegistrarEcto(idUnico, ehAliado);
+    }
+    if ((cartaAlvo.nome === "Fraguer" || cartaAlvo.nome === "Fraguer Fundido")
+        && typeof window.rpgRegistrarFraguer === "function") {
+        window.rpgRegistrarFraguer(idUnico, ehAliado, cartaAlvo.nome === "Fraguer Fundido");
+    }
+    if (cartaAlvo.nome === "Spiritista" && typeof window.rpgRegistrarSpiritista === "function") {
+        window.rpgRegistrarSpiritista(idUnico, ehAliado);
+    }
+    if (copiandoSeteNegativo && typeof window.rpgRegistrarSeteNegativo === "function") {
+        window.rpgRegistrarSeteNegativo(idUnico, ehAliado);
+    }
+
     if (typeof animarMetamorfoseCtrl === "function") {
         animarMetamorfoseCtrl(idUnico, cartaAlvo.nome, ehAliado);
     }
     
-    narrar(`📋 Cópia concluída! Seu ${nomeDaCartaAtual} copiou [${cartaAlvo.nome}] com atributos reduzidos em 1.`);
+    narrar(copiandoSlime
+        ? `📋 Cópia concluída! O ${nomeDaCartaAtual} ganhou a passiva do Slime e iniciou uma nova família com 9 de vida e 1 de dano.`
+        : `📋 Cópia concluída! Seu ${nomeDaCartaAtual} copiou [${cartaAlvo.nome}] com atributos reduzidos em 1.`);
     // Passivas de entrada/ciclo precisam ser ligadas no momento da cópia, pois o Ctrl já
     // estava no campo quando ganhou a nova identidade.
     if (cartaAlvo.nome === "Necromante") {
@@ -1288,6 +1449,8 @@ function usarPassivaCtrlC(idUnico, botao) {
             `<button onclick="inimigoAtacar('${idUnico}')" style="padding: 5px; background-color: darkred; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Atacar ⚔️</button>`;
     }
     
+    // Mesmo copiando uma carta sem Especial (inclusive o Slime), o Ctrl mantém
+    // o próprio Especial de rolar o dado em busca do +1 de dano.
     let btnEspecial = `<button onclick="usarHabilidade('${nomeDaCartaAtual}', '${idUnico}', this)" style="background-color: purple; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Especial 🔮</button>`;
     
     let botoesExtras = [];

@@ -15,6 +15,9 @@
     const MAX_ACOES_POR_TURNO = 40; // trava de segurança contra loop infinito
 
     let botJogando = false;
+    let timerCicloBot = null;
+    let observadorCampoVazio = null;
+    let reposicaoCampoAgendada = null;
     function setBotJogando(valor) {
         botJogando = valor;
         // 🌐 Exposto globalmente pra main.js saber quando é o BOT (e não um humano jogando
@@ -24,15 +27,36 @@
     let acoesNesteTurno = 0;
     let ladraoUsosNesteTurno = 0; // trava pra não ficar girando a Passiva do Ladrão o turno inteiro
 
+    function cancelarCicloBotAgendado() {
+        if (timerCicloBot !== null) clearTimeout(timerCicloBot);
+        timerCicloBot = null;
+    }
+
+    function agendarCicloBot(atraso) {
+        if (!estaVezDoBot()) return false;
+        cancelarCicloBotAgendado();
+        timerCicloBot = setTimeout(() => {
+            timerCicloBot = null;
+            botCicloDeTurno();
+        }, atraso);
+        return true;
+    }
+
     // -------------------------------------------------------------------
     // UTILITÁRIOS DE LEITURA DO TABULEIRO
     // -------------------------------------------------------------------
-    function estaVezDoBot() {
+    function modoControladoPeloBot() {
         // No PvP local, o segundo lado continua sendo controlado por uma pessoa.
         // Quando a nova tela inicial está presente, a IA só assume modos contra inimigos.
         if (typeof window.rpgModoAtual !== "undefined"
             && window.rpgModoAtual !== "pve-solo"
+            && window.rpgModoAtual !== "pve-monstro-solo"
             && window.rpgModoAtual !== "pve-dupla") return false;
+        return true;
+    }
+
+    function estaVezDoBot() {
+        if (!modoControladoPeloBot()) return false;
         return typeof turnoAtivo !== "undefined" && turnoAtivo === 2 &&
                typeof jogoIniciado !== "undefined" && jogoIniciado === true;
     }
@@ -139,16 +163,14 @@
         }, null);
     }
 
-    // 🩹 NOVO: diz se uma carta em campo pode ser alvo de ataque de verdade — usado pra tirar
-    // da lista de candidatos cartas que o próprio jogo recusa atacar (Cavalo de Tróia sempre,
-    // Vampi7 com menos de 3 de vida), evitando que o bot escolha um alvo, tente atacar e o
-    // ataque seja recusado sem nada acontecer (ficando preso tentando o mesmo alvo à toa).
+    // Diz se uma carta em campo pode ser alvo de ataque de verdade. O Vampi7 abaixo de
+    // 3 só é recusado enquanto tiver aliados; se estiver sozinho, vira um alvo válido.
     function alvoEhAtacavel(id) {
         let nome = nomeDaCarta(id);
         if (nome === "Cavalo de Tróia") return false;
         if (nome === "Vampi7") {
-            let v = vidaDaCarta(id);
-            return v !== null && v >= 3;
+            let pacote = document.getElementById("pacote-" + id);
+            return !(typeof window.vampi7EstaIntangivel === "function" && window.vampi7EstaIntangivel(pacote));
         }
         return true;
     }
@@ -491,7 +513,7 @@
         // --- Ataque do bot aguardando escolha de alvo (mais de 1 carta no seu campo) ---
         if (typeof modoAtaqueInimigo !== "undefined" && modoAtaqueInimigo === true) {
             let candidatos = idsNoContainer("campo-j1", "carta-aliada")
-                .filter(alvoEhAtacavel); // 🩹 tira Cavalo de Tróia e Vampi7 (<3 vida) da lista — não dá pra atacá-los mesmo
+                .filter(alvoEhAtacavel); // tira Cavalo de Tróia e somente o Vampi7 que ainda está intangível
             if (candidatos.length === 0) return false;
             // prioriza finalizar quem já está fraco; senão ataca a maior ameaça
             let matavel = candidatos.filter(id => {
@@ -578,6 +600,33 @@
         return typeof bloqueioNecro !== "undefined" && bloqueioNecro[idUnico] && bloqueioNecro[idUnico] > 0;
     }
 
+    function cartaDaMaoEhTropa(idUnico) {
+        let pacote = document.getElementById("pacote-" + idUnico);
+        if (!pacote) return false;
+
+        // Slime, Esqueleto e os próximos monstros não fazem parte do banco
+        // normal, mas continuam sendo tropas válidas.
+        if (pacote.dataset.inimigoEspecial) return true;
+
+        let idBase = idBaseDaCarta(idUnico);
+        let info = (typeof bancoDeCartas !== "undefined" && idBase)
+            ? bancoDeCartas.find(c => c.id === idBase)
+            : null;
+
+        // As cartas invocadas pelo Necromante usam IDs "necro_...", que não
+        // revelam a carta-base. Nesse caso, encontra a tropa pelo nome visível.
+        if (!info && typeof bancoDeCartas !== "undefined") {
+            let nomeVisivel = nomeDaCarta(idUnico);
+            info = bancoDeCartas.find(c => c.nome === nomeVisivel) || null;
+        }
+
+        if (info && typeof suportesReais !== "undefined") {
+            return !suportesReais.includes(info.id);
+        }
+        if (typeof ehPacoteSuporte === "function") return !ehPacoteSuporte(pacote);
+        return true;
+    }
+
     function botJogarCartasDaMao() {
         let idsMao = idsNaMao("mao-j2").filter(id => !cartaEstaFatigada(id));
         if (idsMao.length === 0) return false;
@@ -585,10 +634,7 @@
         // Prioriza colocar TROPAS em campo primeiro (presença no tabuleiro é quase sempre bom)
         let candidatosSuporte = [];
         for (let idCarta of idsMao) {
-            let idBase = idBaseDaCarta(idCarta);
-            let info = (typeof bancoDeCartas !== "undefined" && idBase) ? bancoDeCartas.find(c => c.id === idBase) : null;
-            let ehSuporte = info && typeof suportesReais !== "undefined" && suportesReais.includes(info.id);
-            if (!ehSuporte) {
+            if (cartaDaMaoEhTropa(idCarta)) {
                 jogarCartaInimigo("pacote-" + idCarta);
                 return true;
             }
@@ -608,35 +654,56 @@
         return false;
     }
 
-    // 🃏 CRACKER — reação de emergência fora do turno do bot. Se o jogador roubar
-    // a única carta inimiga em campo, coloca exatamente UMA tropa da mão para que ainda
-    // exista um alvo. Não inicia o ciclo normal da IA e, portanto, não ataca nem usa Especial.
-    function botReporCampoAposCracker() {
+    // Reposição de emergência: qualquer efeito que roube, apague ou transforme a última
+    // tropa do bot provoca a entrada imediata de outra carta, sem conceder um ataque fora
+    // do turno. No modo de ondas, a própria reserva do monstro decide o tamanho da onda.
+    function botGarantirCartaNoCampo(motivo) {
+        if (!modoControladoPeloBot()) return false;
         if (typeof jogoIniciado === "undefined" || jogoIniciado !== true) return false;
-        if (typeof turnoAtivo === "undefined" || turnoAtivo !== 1) return false;
+        if (typeof faseAbertura !== "undefined" && faseAbertura === true) return false;
 
         let campoBot = document.getElementById("campo-j2");
         if (!campoBot || idsNoContainer("campo-j2", "carta-inimiga").length > 0) return false;
 
         let candidatos = idsNaMao("mao-j2")
             .filter(id => !cartaEstaFatigada(id))
-            .filter(id => {
-                let idBase = idBaseDaCarta(id);
-                let info = (typeof bancoDeCartas !== "undefined" && idBase)
-                    ? bancoDeCartas.find(c => c.id === idBase)
-                    : null;
-                return info && !(typeof suportesReais !== "undefined" && suportesReais.includes(info.id));
-            });
+            .filter(cartaDaMaoEhTropa);
 
-        if (candidatos.length === 0) return false;
+        if (candidatos.length === 0) {
+            if (window.rpgModoAtual === "pve-monstro-solo"
+                && typeof window.rpgModoInimigoReporCampoVazio === "function") {
+                return window.rpgModoInimigoReporCampoVazio();
+            }
+            return false;
+        }
 
         let escolhida = maiorAmeaca(candidatos) || candidatos[0];
         jogarCartaInimigo("pacote-" + escolhida);
-        narrar(`🤖 O Cracker deixou o campo do bot vazio! Ele colocou [${nomeDaCarta(escolhida)}] da mão para você ter um alvo, mas continua sendo a sua vez.`);
+        narrar(`🤖 O campo do bot ficou vazio${motivo ? ` por causa de ${motivo}` : ""}! Ele colocou [${nomeDaCarta(escolhida)}] da mão para você continuar tendo um alvo.`);
         return true;
     }
 
+    function botReporCampoAposCracker() {
+        return botGarantirCartaNoCampo("Cracker");
+    }
+
     window.botReporCampoAposCracker = botReporCampoAposCracker;
+    window.botGarantirCartaNoCampo = botGarantirCartaNoCampo;
+
+    function instalarObservadorCampoVazio() {
+        let campoBot = document.getElementById("campo-j2");
+        if (!campoBot) return;
+        if (observadorCampoVazio) observadorCampoVazio.disconnect();
+
+        observadorCampoVazio = new MutationObserver(() => {
+            if (reposicaoCampoAgendada !== null) clearTimeout(reposicaoCampoAgendada);
+            reposicaoCampoAgendada = setTimeout(() => {
+                reposicaoCampoAgendada = null;
+                botGarantirCartaNoCampo("um efeito");
+            }, 180);
+        });
+        observadorCampoVazio.observe(campoBot, { childList: true });
+    }
 
     // -------------------------------------------------------------------
     // FASE 2.5 — INCENDIÁRIO (acende a pólvora assim que houver alvo na arena)
@@ -724,8 +791,6 @@
         // copiada" não encontrados).
         for (let id of idsComCarta) {
             if (nomeDaCarta(id) !== "Ctrl C" && nomeDaCarta(id) !== "Ctrl V") continue;
-            let jaCopiou = typeof ctrlV !== "undefined" && ctrlV[id];
-            if (jaCopiou) continue;
             let btnPassiva = document.querySelector('#pacote-' + cssEscape(id) + ' button[onclick*="usarPassivaCtrlC"]');
             if (!btnPassiva || btnPassiva.style.display === "none") continue;
             try {
@@ -799,19 +864,46 @@
     function botAtacar() {
         let tropasProntas = idsNoContainer("campo-j2", "carta-inimiga")
             .filter(id => !estaCongelada(id))
+            // Durante o ataque dividido, quem já atacou sai da lista. Assim o bot
+            // obrigatoriamente usa o outro integrante, independentemente de quem começou.
+            .filter(id => {
+                if (typeof obterSeparadaoDivididoAtivo !== "function"
+                    || typeof separadaoAtacantesNaSequencia === "undefined") return true;
+                let idSeparado = obterSeparadaoDivididoAtivo(id);
+                return !idSeparado || !(separadaoAtacantesNaSequencia[idSeparado] || []).includes(id);
+            })
             // O Incendiário (inclusive um Ctrl que o copiou) combate pelo ciclo da pólvora,
             // não pelo ataque comum.
             .filter(id => nomeDaCarta(id) !== "Incendiário")
-            // 👥 Separado/Separadois com parceira viva não ataca pelo próprio botão — só
-            // quando a parceira ataca. Tirando eles daqui, o bot nunca tenta usá-los como
-            // atacante principal (senão o clique é recusado e o bot trava sem passar a vez).
+            // 👥 Antes de conquistar o Especial, o Separado com parceira viva só ataca
+            // puxado por ela. Depois do primeiro 6, separadaoDividido é recarregado a cada
+            // turno e o bot também pode escolher o próprio Separado como atacante.
             .filter(id => {
                 if (typeof parceriaSeparado === "undefined") return true;
                 let nome = nomeDaCarta(id);
                 if (nome !== "Separado" && nome !== "Separadois") return true;
+                if (typeof separadaoDividido !== "undefined" && separadaoDividido[id] > 0) return true;
                 let idParceira = parceriaSeparado[id];
                 return !(idParceira && document.getElementById("pacote-" + idParceira));
             });
+
+        // Se uma metade da dupla já atacou, nenhuma terceira carta pode encerrar o turno
+        // no lugar dela: o próximo atacante do bot precisa ser exatamente a outra metade.
+        if (typeof separadaoDividido !== "undefined" && typeof separadaoAtacantesNaSequencia !== "undefined") {
+            let idSeparadoPendente = Object.keys(separadaoDividido).find(idSeparado => {
+                let pacote = document.getElementById("pacote-" + idSeparado);
+                return separadaoDividido[idSeparado] === 1
+                    && pacote?.closest("#campo-j2")
+                    && (separadaoAtacantesNaSequencia[idSeparado] || []).length === 1;
+            });
+            if (idSeparadoPendente) {
+                let primeiro = separadaoAtacantesNaSequencia[idSeparadoPendente][0];
+                let idObrigatorio = primeiro === idSeparadoPendente
+                    ? parceriaSeparado[idSeparadoPendente]
+                    : idSeparadoPendente;
+                tropasProntas = tropasProntas.filter(id => id === idObrigatorio);
+            }
+        }
         if (tropasProntas.length === 0) return false;
 
         let inimigosNoCampo = idsNoContainer("campo-j1", "carta-aliada");
@@ -843,7 +935,13 @@
     // LOOP PRINCIPAL DO TURNO DO BOT
     // -------------------------------------------------------------------
     function botCicloDeTurno() {
-        if (!estaVezDoBot()) { setBotJogando(false); acoesNesteTurno = 0; ladraoUsosNesteTurno = 0; return; }
+        if (!estaVezDoBot()) {
+            cancelarCicloBotAgendado();
+            setBotJogando(false);
+            acoesNesteTurno = 0;
+            ladraoUsosNesteTurno = 0;
+            return;
+        }
 
         acoesNesteTurno++;
         if (acoesNesteTurno > MAX_ACOES_POR_TURNO) {
@@ -854,11 +952,17 @@
         }
 
         try {
-            if (botResolverEscolhaPendente()) { setTimeout(botCicloDeTurno, BOT_DELAY_ACAO); return; }
-            if (botJogarCartasDaMao())        { setTimeout(botCicloDeTurno, BOT_DELAY_ACAO); return; }
-            if (botIncendiario())             { setTimeout(botCicloDeTurno, BOT_DELAY_ACAO); return; }
-            if (botUsarEspeciais())           { setTimeout(botCicloDeTurno, BOT_DELAY_ACAO); return; }
-            if (botAtacar())                  { setTimeout(botCicloDeTurno, BOT_DELAY_ACAO); return; }
+            if (botResolverEscolhaPendente()) { agendarCicloBot(BOT_DELAY_ACAO); return; }
+            // A reserva fechada continua sendo controlada pelo sistema de ondas, mas
+            // cartas normais criadas por Necromante, Reviverta, Dupliquetion e outros
+            // efeitos ficam na mão real e precisam poder ser jogadas pela IA.
+            if (botJogarCartasDaMao()) {
+                agendarCicloBot(BOT_DELAY_ACAO);
+                return;
+            }
+            if (botIncendiario())             { agendarCicloBot(BOT_DELAY_ACAO); return; }
+            if (botUsarEspeciais())           { agendarCicloBot(BOT_DELAY_ACAO); return; }
+            if (botAtacar())                  { agendarCicloBot(BOT_DELAY_ACAO); return; }
         } catch (e) {
             console.error("[BOT] erro no ciclo de turno:", e);
         }
@@ -868,17 +972,33 @@
             try { passarTurno(); } catch (e) { /* nada a fazer */ }
         }
         setBotJogando(false);
+        cancelarCicloBotAgendado();
         acoesNesteTurno = 0;
         ladraoUsosNesteTurno = 0;
     }
 
     function verificarEIniciarBot() {
-        if (estaVezDoBot() && !botJogando) {
+        if (!estaVezDoBot()) {
+            // A troca para o turno do jogador também encerra oficialmente o ciclo
+            // anterior da IA. Assim os limites e travas nunca vazam para a próxima vez.
+            if (botJogando || timerCicloBot !== null) {
+                cancelarCicloBotAgendado();
+                setBotJogando(false);
+                acoesNesteTurno = 0;
+                ladraoUsosNesteTurno = 0;
+            }
+            return;
+        }
+
+        if (!botJogando) {
             setBotJogando(true);
             acoesNesteTurno = 0;
             ladraoUsosNesteTurno = 0;
-            setTimeout(botCicloDeTurno, BOT_DELAY_INICIO);
         }
+
+        // Mesmo que uma reposição fora do turno tenha deixado botJogando=true,
+        // nunca permite que a vez do bot exista sem uma próxima ação agendada.
+        if (timerCicloBot === null) agendarCicloBot(BOT_DELAY_INICIO);
     }
 
     // -------------------------------------------------------------------
@@ -887,12 +1007,17 @@
     function botEscolherCartaAbertura() {
         if (typeof window.rpgModoAtual !== "undefined"
             && window.rpgModoAtual !== "pve-solo"
+            && window.rpgModoAtual !== "pve-monstro-solo"
             && window.rpgModoAtual !== "pve-dupla") return;
         if (typeof faseAbertura === "undefined" || faseAbertura !== true) return;
         if (typeof aberturaEscolhaJ2 !== "undefined" && aberturaEscolhaJ2 !== null) return; // já escolheu
 
         let idsMao = idsNaMao("mao-j2");
         let candidatosTropa = idsMao.filter(function (id) {
+            let pacote = document.getElementById("pacote-" + id);
+            // Qualquer carta criada pelo modo inimigo é uma tropa válida para
+            // abrir a partida, mesmo não existindo em bancoDeCartas.
+            if (pacote && pacote.dataset.inimigoEspecial) return true;
             let idBase = idBaseDaCarta(id);
             let info = (typeof bancoDeCartas !== "undefined" && idBase) ? bancoDeCartas.find(c => c.id === idBase) : null;
             return info && !(typeof suportesReais !== "undefined" && suportesReais.includes(info.id));
@@ -915,6 +1040,13 @@
             let original = window.passarTurno;
             window.passarTurno = function (...args) {
                 let r = original.apply(this, args);
+                // Quando a fadiga de uma carta do Necromante acaba justamente na
+                // troca para o jogador, não haverá nova mutação no campo para acordar
+                // o observador. Fazemos aqui uma nova tentativa de reposição, evitando
+                // que o jogador receba a vez sem ter nenhuma carta para atacar.
+                if (window.rpgModoAtual === "pve-monstro-solo") {
+                    botGarantirCartaNoCampo();
+                }
                 verificarEIniciarBot();
                 return r;
             };
@@ -936,10 +1068,22 @@
         }
     }
 
+    // O contador local do Ladrão pertence à IA e não é visível em main.js.
+    // A viagem do tempo do lado do bot também precisa liberar essa tentativa.
+    window.rpgBotReativarPassivasAposViagem = function (lado) {
+        if (lado === "j2") ladraoUsosNesteTurno = 0;
+    };
+
     // main.js/habilidades.js/cartas.js já devem ter carregado antes deste arquivo,
     // mas instalamos de novo no load só por segurança.
     instalarGanchos();
+    instalarObservadorCampoVazio();
     window.addEventListener("load", instalarGanchos);
+    window.addEventListener("load", instalarObservadorCampoVazio);
+
+    // Rede de segurança contra disputas entre animações, reposição de campo e
+    // troca de turno. Não executa ações; apenas repõe um agendamento ausente.
+    setInterval(verificarEIniciarBot, 1000);
 
     console.log("[BOT] Sistema de IA do Oponente carregado. O bot assume o turno 2 automaticamente.");
 })();

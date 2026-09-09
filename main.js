@@ -59,6 +59,9 @@ let geloBumerskeletonAtivos = {}; // mantém os fragmentos ligados somente ao ge
 let timersFogoBumerskeleton = {}; // permite renovar o fogo visual sem um temporizador antigo apagá-lo cedo
 let modoEspecialBumerskeleton = false; // 🪃 Especial do Bumerskeleton acionado ANTES de atacar
 let idBumerskeletonEspecialAtivo = null;
+let especialFixoBumerskeleton = {}; // idUnico -> 3 (fogo) ou 5 (gelo), definido no primeiro sucesso
+let especialFixoSeparado = {}; // idUnico -> true: a dupla ataca separada permanentemente depois do primeiro 6
+let bonusVampi7Sozinho = {}; // idUnico -> true enquanto o +1 de dano por ser a última carta estiver ativo
 let tabelaDanoBumerangue = [1, 2, 4, 4, 4, 4, 4, 4, 4, 4]; // Escala pela ORDEM do golpe na cadeia: 1º alvo leva 1, 2º leva 2, do 3º em diante 4 cada (teto pra não ficar forte demais)
 let cartasCongeladas = {}; // Registra quais cartas estão sob o efeito de gelo do bumerangue
 let cavalosDeTroiaAtivos = {}; // idUnico -> passagens de turno restantes até explodir (2 rodadas = 4 passagens, 1 rodada = vez de cada jogador)
@@ -75,6 +78,8 @@ let parceriaSeparado = {}; // idSeparado -> idParceiro (carta que "junta" pra at
 let modoParceriaSeparado = false; // aguardando clique na carta aliada que vai virar parceira
 let idSeparadoParceriaAtivo = null;
 let separadaoDividido = {}; // idSeparado -> quantos ataques da dupla ainda faltam (habilidade dado 6)
+let separadaoAtacantesNaSequencia = {}; // idSeparado -> IDs que já atacaram; permite começar por qualquer integrante
+let ignorarInterceptacaoSeparadoUmaVez = false; // o botão manual pode encerrar a vez sem contar uma seleção incompleta como ataque
 let modoPrenderNoTempo = false; // aguardando clique na carta inimiga que vai ficar presa no tempo
 let idPrenderNoTempoAtivo = null;
 let portableDuracao = {}; // idUnico -> passagens de turno restantes até a bateria acabar (2 rodadas = 4 passagens)
@@ -88,6 +93,148 @@ let modoAlvoVenenoMago = false; // aguardando o Mago escolher uma carta do lado 
 let idMagoVenenoAtivo = null;
 let venenosMago = {}; // idEfeito -> { idMago, idAlvo, restam }; um mesmo Mago pode manter vários alvos
 let proximoIdVenenoMago = 1;
+// Quantidade real de integrantes que ainda vivem em cada Trio. O valor só pode
+// diminuir: recuperar vida cura os sobreviventes, mas não ressuscita um integrante.
+let unidadesVivasTrios = {};
+// Espelho leve dos atributos que estão realmente visíveis nas cartas. Ele não
+// substitui os números do jogo: apenas permite detectar qualquer mudança de
+// vida/dano e atualizar imediatamente as passivas que dependem desses valores.
+let atributosAoVivo = new Map();
+let sincronizacaoAtributosAgendada = false;
+// Guarda apenas a diferença causada por buffs externos. O valor natural do
+// Cavaleiro muda ao vivo entre 2, 3 e 5 sem apagar Besta/Auvex/Allsforms.
+let danoCavaleirosAoVivo = new Map();
+// 👻 ECTO — a identidade atingida perde suas habilidades permanentemente.
+// Vida, dano, buffs externos e o ataque comum continuam funcionando normalmente.
+let cartasSilenciadasEcto = {};
+
+function configuracaoDoTrio(nomeCarta) {
+    if (nomeCarta === "Trio de Goblin") {
+        return {
+            vidaPorUnidade: 2,
+            maximo: 3,
+            // O trio completo causa 2; com dois ou um Goblin, causa 1.
+            danoPorQuantidade: { 3: 2, 2: 1, 1: 1, 0: 0 }
+        };
+    }
+    if (nomeCarta === "Trio de Bárbaros") {
+        return {
+            vidaPorUnidade: 3,
+            maximo: 3,
+            danoPorQuantidade: { 3: 3, 2: 2, 1: 1, 0: 0 }
+        };
+    }
+    return null;
+}
+
+function quantidadeUnidadesDoTrio(vida, configuracao) {
+    if (!Number.isFinite(vida) || vida <= 0) return 0;
+    return Math.max(1, Math.min(configuracao.maximo, Math.ceil(vida / configuracao.vidaPorUnidade)));
+}
+
+// Diminui o atributo de dano no mesmo instante em que um integrante morre.
+// Só retiramos a parcela natural do Trio; bônus de Besta, Auvex, Curandeiro,
+// Allsforms e outros efeitos continuam preservados.
+function sincronizarDanoDoTrio(idUnico, vidaAntes, vidaDepois) {
+    let pacote = document.getElementById("pacote-" + idUnico);
+    if (!pacote) return;
+
+    let nomeEl = pacote.querySelector(".nome-carta");
+    if (!nomeEl) return;
+    let nomeCarta = obterNomeEfetivoCarta(idUnico, nomeEl.innerText.trim());
+    let configuracao = configuracaoDoTrio(nomeCarta);
+    if (!configuracao) return;
+
+    let quantidadeAnterior = unidadesVivasTrios[idUnico];
+    if (!Number.isFinite(quantidadeAnterior)) {
+        quantidadeAnterior = quantidadeUnidadesDoTrio(vidaAntes, configuracao);
+    }
+
+    // Cura nunca aumenta a quantidade: apenas dano capaz de atravessar o limite
+    // de vida de um integrante faz a contagem baixar.
+    let quantidadePelaVida = quantidadeUnidadesDoTrio(vidaDepois, configuracao);
+    let quantidadeAtual = Math.min(quantidadeAnterior, quantidadePelaVida);
+    unidadesVivasTrios[idUnico] = quantidadeAtual;
+
+    let danoNaturalAnterior = configuracao.danoPorQuantidade[quantidadeAnterior] || 0;
+    let danoNaturalAtual = configuracao.danoPorQuantidade[quantidadeAtual] || 0;
+    let reducao = Math.max(0, danoNaturalAnterior - danoNaturalAtual);
+    if (reducao <= 0) return;
+
+    let danoEl = document.getElementById("dano-" + idUnico);
+    if (!danoEl) return;
+    let danoAntes = parseFloat(danoEl.innerText) || 0;
+    danoEl.innerText = Math.max(0, danoAntes - reducao);
+    if (typeof mostrarEfeitoPerdaAtaque === "function") mostrarEfeitoPerdaAtaque(idUnico);
+}
+
+function sincronizarAtributosAoVivo() {
+    let idsPresentes = new Set();
+    let houveMudanca = false;
+
+    document.querySelectorAll("div[id^='pacote-']").forEach(pacote => {
+        let idUnico = pacote.id.replace("pacote-", "");
+        let vidaEl = document.getElementById("vida-" + idUnico);
+        let danoEl = document.getElementById("dano-" + idUnico);
+        if (!vidaEl || !danoEl) return;
+
+        idsPresentes.add(idUnico);
+        let vida = parseFloat(vidaEl.innerText);
+        let dano = parseFloat(danoEl.innerText);
+        vida = Number.isFinite(vida) ? Math.max(0, vida) : 0;
+        dano = Number.isFinite(dano) ? Math.max(0, dano) : 0;
+
+        // Segurança global: nenhum caminho alternativo pode deixar um atributo
+        // inválido ou negativo aparecendo até a próxima atualização da partida.
+        if (parseFloat(vidaEl.innerText) !== vida) vidaEl.innerText = vida;
+        if (parseFloat(danoEl.innerText) !== dano) danoEl.innerText = dano;
+
+        let anterior = atributosAoVivo.get(idUnico);
+        if (!anterior || anterior.vida !== vida || anterior.dano !== dano) {
+            houveMudanca = true;
+            if (anterior && anterior.vida !== vida) {
+                sincronizarDanoDoTrio(idUnico, anterior.vida, vida);
+                dano = parseFloat(danoEl.innerText);
+                dano = Number.isFinite(dano) ? Math.max(0, dano) : 0;
+            }
+
+            pacote.dataset.vidaAtual = String(vida);
+            pacote.dataset.danoAtual = String(dano);
+            let status = pacote.querySelector(".status-container");
+            if (status) status.setAttribute("aria-label", `${vida} de vida e ${dano} de ataque`);
+            atributosAoVivo.set(idUnico, { vida, dano });
+        }
+    });
+
+    Array.from(atributosAoVivo.keys()).forEach(idUnico => {
+        if (!idsPresentes.has(idUnico)) {
+            atributosAoVivo.delete(idUnico);
+            houveMudanca = true;
+        }
+    });
+
+    if (houveMudanca) {
+        // Unidão e os estados visuais que dependem de atributos passam a reagir
+        // no mesmo instante, inclusive a buffs, curas e danos fora do ataque comum.
+        if (typeof atualizarTodosUnidoes === "function") atualizarTodosUnidoes();
+        if (typeof sincronizarVisuaisVampi7 === "function") sincronizarVisuaisVampi7();
+    }
+
+    // Também precisa rodar quando uma carta apenas muda de mão para campo: nesse
+    // caso os atributos não mudaram, mas a quantidade de alvos do Cavaleiro sim.
+    if (typeof sincronizarDanoCavaleirosAoVivo === "function") {
+        sincronizarDanoCavaleirosAoVivo();
+    }
+}
+
+function agendarSincronizacaoAtributosAoVivo() {
+    if (sincronizacaoAtributosAgendada) return;
+    sincronizacaoAtributosAgendada = true;
+    requestAnimationFrame(() => {
+        sincronizacaoAtributosAgendada = false;
+        sincronizarAtributosAoVivo();
+    });
+}
 
 // 🚨 NOVIDADE: A lista de suportes/poções agora fica no topo do código!
 let suportesReais = [
@@ -522,6 +669,7 @@ function aplicarDanoPeriodicoBarrilGoblin(idBarril, idAlvo) {
 
     if (danoTotal > 0) pulsarMarcadoresBarrilGoblin(idBarril);
     vidaAlvoEl.innerText = novaVida;
+    sincronizarDanoDoTrio(idAlvo, vidaAlvoAntes, novaVida);
 
     // Esta é a única condição em que o ataque dos Goblins pode remover o alvo.
     if (novaVida <= 0) {
@@ -949,6 +1097,125 @@ function obterNomeEfetivoCarta(idUnico, nomeExibido) {
     return (copia && copia.nomeOriginal) ? copia.nomeOriginal : (nomeExibido || "");
 }
 
+function cartaSilenciadaPeloEcto(idUnico) {
+    return !!(idUnico && cartasSilenciadasEcto[idUnico]);
+}
+window.rpgCartaSilenciadaPeloEcto = cartaSilenciadaPeloEcto;
+
+function aplicarInterfaceSilencioEcto(idUnico) {
+    let pacote = document.getElementById("pacote-" + idUnico);
+    if (!pacote) return;
+
+    pacote.classList.add("silenciada-pelo-ecto");
+    pacote.dataset.ectoSilenciada = "true";
+    let acoes = pacote.querySelector("div[id^='acoes-']");
+    if (acoes) {
+        Array.from(acoes.querySelectorAll("button")).forEach(botao => {
+            let acao = botao.getAttribute("onclick") || "";
+            if (/^\s*(iniciarAtaque|inimigoAtacar)\s*\(/.test(acao)) {
+                botao.classList.add("btn-ataque-sem-habilidade");
+            } else {
+                botao.remove();
+            }
+        });
+
+        if (!acoes.querySelector(".btn-ataque-sem-habilidade")) {
+            let ehAliado = pacote.closest("#campo-j1, #mao-j1") !== null;
+            let nome = (pacote.querySelector(".nome-carta")?.innerText || "Carta").replace(/\s*\(S\/Hab\)\s*$/i, "");
+            let botao = document.createElement("button");
+            botao.className = "btn-ataque-sem-habilidade";
+            botao.textContent = "Atacar ⚔️";
+            botao.style.cssText = `padding:5px;width:100%;margin-bottom:2px;cursor:pointer;${ehAliado ? "" : "background-color:darkred;color:white;"}`;
+            botao.setAttribute("onclick", ehAliado
+                ? `iniciarAtaque('${nome.replace(/'/g, "\\'")}', '${idUnico}')`
+                : `inimigoAtacar('${idUnico}')`);
+            acoes.appendChild(botao);
+        }
+    }
+
+    if (!pacote.querySelector(".selo-silencio-ecto")) {
+        let selo = document.createElement("span");
+        selo.className = "selo-silencio-ecto";
+        selo.textContent = "SEM HAB.";
+        selo.title = "Passiva e Especial removidos permanentemente pelo Ecto";
+        pacote.appendChild(selo);
+    }
+}
+
+function desativarHabilidadesSilenciadas(idUnico) {
+    let bonusAnterior = Number(bonusUnidao[idUnico]) || 0;
+    let tinhaEscudo = !!escudoGuerreiro[idUnico];
+    let danoEl = document.getElementById("dano-" + idUnico);
+    if (danoEl && bonusAnterior > 0) {
+        danoEl.innerText = Math.max(0, (parseFloat(danoEl.innerText) || 0) - bonusAnterior);
+    }
+
+    [bonusUnidao, goblinJaAtacouNesteTurno, goblinAtaquesGanhos, viajantesJaUsaram,
+        escudoGuerreiro, alvosDoBarril, barrilJaImpactou, splashBarbaroAtivo,
+        especialFixoBumerskeleton, especialFixoSeparado, bonusVampi7Sozinho,
+        cavalosDeTroiaAtivos, incendiarioCiclo, incendiarioAlvos,
+        incendiarioFasesVisuais, separadaoDividido, separadaoAtacantesNaSequencia,
+        portableDuracao, ctrlV
+    ].forEach(estado => {
+        if (estado && typeof estado === "object") delete estado[idUnico];
+    });
+    if (typeof orkBuffado !== "undefined") delete orkBuffado[idUnico];
+    if (typeof ladroesQueJaRoubaram !== "undefined") delete ladroesQueJaRoubaram[idUnico];
+    if (typeof cavaleiroAtivado !== "undefined") delete cavaleiroAtivado[idUnico];
+    if (typeof window.mensageirosEmArea !== "undefined") delete window.mensageirosEmArea[idUnico];
+
+    Object.keys(parceriaSeparado).forEach(idSeparado => {
+        if (idSeparado === idUnico || parceriaSeparado[idSeparado] === idUnico) {
+            delete parceriaSeparado[idSeparado];
+            delete separadaoDividido[idSeparado];
+            delete separadaoAtacantesNaSequencia[idSeparado];
+        }
+    });
+    Object.keys(cartasProtegidas).forEach(idProtegido => {
+        if (cartasProtegidas[idProtegido] === idUnico) delete cartasProtegidas[idProtegido];
+    });
+
+    if (tinhaEscudo && typeof quebrarVisualEscudo === "function") quebrarVisualEscudo(idUnico);
+    if (typeof atualizarTodosUnidoes === "function") atualizarTodosUnidoes();
+    if (typeof window.rpgSincronizarFraguers === "function") window.rpgSincronizarFraguers();
+}
+
+function silenciarCartaPeloEcto(idUnico) {
+    let pacote = document.getElementById("pacote-" + idUnico);
+    if (!pacote) return null;
+    let nome = pacote.querySelector(".nome-carta")?.innerText?.replace(/\s*\(S\/Hab\)\s*$/i, "").trim() || "Carta";
+    let ids = pacote.dataset.inimigoEspecial === "slime" && typeof window.rpgObterIdsFamiliaSlime === "function"
+        ? window.rpgObterIdsFamiliaSlime(idUnico)
+        : [idUnico];
+    if (ids.length === 0) ids = [idUnico];
+    let jaEstavaSilenciada = ids.every(cartaSilenciadaPeloEcto);
+
+    ids.forEach(id => {
+        cartasSilenciadasEcto[id] = true;
+        desativarHabilidadesSilenciadas(id);
+        aplicarInterfaceSilencioEcto(id);
+    });
+    return { nome, quantidade: ids.length, jaEstavaSilenciada };
+}
+window.rpgSilenciarCartaPeloEcto = silenciarCartaPeloEcto;
+
+// O toque acontece antes de descontar a vida. Assim, se o golpe for letal,
+// Passivas de morte como as do Ork, Barril e Slime já estarão desativadas.
+function aplicarToqueEctoAntesDoDano(idAlvo) {
+    let idEcto = ultimoIdQueAtacou;
+    let pacoteEcto = idEcto ? document.getElementById("pacote-" + idEcto) : null;
+    let pacoteAlvo = idAlvo ? document.getElementById("pacote-" + idAlvo) : null;
+    if (!pacoteEcto || !pacoteAlvo || pacoteEcto.dataset.inimigoEspecial !== "ecto" || cartaSilenciadaPeloEcto(idEcto)) return false;
+
+    let resultado = silenciarCartaPeloEcto(idAlvo);
+    if (!resultado) return false;
+    pacoteAlvo.dataset.ectoUltimoAtacante = idEcto;
+    narrar(resultado.jaEstavaSilenciada
+        ? `👻 ${resultado.nome} já estava sem habilidade; o Ecto manteve o bloqueio permanente.`
+        : `👻 TOQUE DO ECTO! ${resultado.nome} perdeu permanentemente sua Passiva e seu Especial.`);
+    return true;
+}
+
 // 🧬 CTRL C / CTRL V — a gosma se deforma enquanto uma cópia luminosa da última
 // carta usada pelo oponente é absorvida. A mecânica acontece normalmente, sem esperar
 // a animação, para não atrasar o turno nem o bot.
@@ -1131,6 +1398,15 @@ document.addEventListener("click", function (evento) {
 function iniciarJogo() {
     deckJ1 = []; maoJ1 = [];
     deckJ2 = []; maoJ2 = [];
+    especialFixoBumerskeleton = {};
+    especialFixoSeparado = {};
+    parceriaSeparado = {};
+    separadaoDividido = {};
+    separadaoAtacantesNaSequencia = {};
+    ignorarInterceptacaoSeparadoUmaVez = false;
+    bonusVampi7Sozinho = {};
+    unidadesVivasTrios = {};
+    cartasSilenciadasEcto = {};
 
     let deckTropaJ1 = []; let deckSuporteJ1 = [];
     let deckTropaJ2 = []; let deckSuporteJ2 = [];
@@ -1335,6 +1611,7 @@ function passarVezManual() {
     modoAtaque = false;
     modoAtaqueInimigo = false;
 
+    ignorarInterceptacaoSeparadoUmaVez = true;
     passarTurno();
 }
 
@@ -1345,6 +1622,24 @@ function passarTurno() {
         clearTimeout(passagemAutomaticaGeloPendente);
         passagemAutomaticaGeloPendente = null;
     }
+
+    // O Especial do Separado precisa sobreviver a TODOS os caminhos de ataque. Algumas
+    // cartas (Cavaleiro, Barris, Mensageiro etc.) encerram a jogada diretamente aqui e
+    // não passam pelo resolvedor do ataque comum. Por isso o registro da dupla acontece
+    // no ponto central de troca de turno: o primeiro integrante segura a vez; o segundo
+    // libera a troca normalmente, independentemente de qual deles começou.
+    if (!ignorarInterceptacaoSeparadoUmaVez && ultimoIdQueAtacou) {
+        let estadoSeparado = finalizarAtaqueSeparadoDividido(ultimoIdQueAtacou, turnoAtivo === 2);
+        if (estadoSeparado === "aguardando") {
+            modoAtaque = false;
+            modoAtaqueInimigo = false;
+            danoPreparado = 0;
+            danoInimigoPreparado = 0;
+            ultimoIdQueAtacou = null;
+            return;
+        }
+    }
+    ignorarInterceptacaoSeparadoUmaVez = false;
 
     // 1. CHECAGEM DE REATAQUES (Se ativar, sai da função sem passar o turno)
     if (ultimoIdQueAtacou && goblinAtaquesGanhos[ultimoIdQueAtacou] === true) {
@@ -1489,7 +1784,7 @@ function passarTurno() {
     }
 
     // 6.5 🐴 CAVALO DE TRÓIA — contagem regressiva até a explosão (1 de dano em TODAS as cartas
-    // inimigas, campo e mão), depois a própria carta some do campo.
+    // inimigas: campo, mão e também a reserva futura do modo Ondas), depois o Cavalo some.
     if (typeof cavalosDeTroiaAtivos !== 'undefined') {
         Object.keys(cavalosDeTroiaAtivos).forEach(idCarta => {
             cavalosDeTroiaAtivos[idCarta]--;
@@ -1498,9 +1793,17 @@ function passarTurno() {
                 if (pacoteCavalo) {
                     let ladoCavalo = pacoteCavalo.closest("#campo-j2") ? "j2" : "j1";
                     let ladoInimigo = (ladoCavalo === "j1") ? "j2" : "j1";
-                    narrar("🐴 SURPRESA! O Cavalo de Tróia se abriu e atingiu TODAS as cartas inimigas (campo e mão) com 1 de dano!");
                     animarEstilhacosCavaloTroia(pacoteCavalo, ladoInimigo);
-                    aplicarDanoCavaloDeTroia(ladoInimigo, 1);
+                    let resultadoTroia = aplicarDanoCavaloDeTroia(ladoInimigo, 1);
+                    let textoReserva = resultadoTroia.reservaAtingida > 0
+                        ? ` e ${resultadoTroia.reservaAtingida} da reserva das próximas ondas`
+                        : "";
+                    let textoEliminadas = resultadoTroia.reservaEliminada === 1
+                        ? " Uma carta foi derrotada antes de entrar em campo!"
+                        : resultadoTroia.reservaEliminada > 1
+                            ? ` ${resultadoTroia.reservaEliminada} cartas foram derrotadas antes de entrar em campo!`
+                            : "";
+                    narrar(`🐴 SURPRESA! O Cavalo de Tróia se abriu e atingiu TODAS as cartas inimigas do campo e da mão${textoReserva} com 1 de dano!${textoEliminadas}`);
                     pacoteCavalo.remove();
                 }
                 delete cavalosDeTroiaAtivos[idCarta];
@@ -1578,6 +1881,11 @@ function passarTurno() {
             if (typeof incendiarioCiclo[idInc] !== 'undefined') incendiarioCiclo[idInc] = proximaFase;
         });
     }
+
+    // 👥 O 6 do Separado é uma conquista permanente, não um efeito de uma rodada.
+    // Toda vez que o turno do time da dupla começa, os dois ataques separados ficam
+    // prontos outra vez sem exigir um novo Especial nem uma nova rolagem de dado.
+    prepararEspeciaisFixosSeparadoDoTurno();
 
     // 7. ATUALIZAÇÃO VISUAL DAS UNIÕES
     if (typeof atualizarTodosUnidoes === "function") {
@@ -1669,19 +1977,20 @@ function invocarToken(idBaseCarta, idCampo) {
         else if (modoAlvoCavaleiroInimigo === true && ehAliado) aplicarAlvoCavaleiroInimigo(idDoPacote);
         // 🧪 2º PRIORIDADE: BRUXO (TRANSFORMAR 4)
         else if (typeof modoBruxoTransformar !== 'undefined' && modoBruxoTransformar === true) {
-            let pacoteAlvo = document.getElementById(idDoPacote);
-            pacoteAlvo.remove(); 
+            let totalTransformado = transformarFamiliaSlimeEmPocao(idDoPacote);
             gerarPocaoAleatoria("mao-j1"); 
             modoBruxoTransformar = false;
             idBruxoAtivo = null;
-            narrar("✨ ZAP! A carta inimiga virou pó e o Bruxo criou uma Poção para você!");
+            narrar(totalTransformado > 1
+                ? `✨ ZAP! A família Slime inteira (${totalTransformado} cartas) virou uma única Poção para você!`
+                : "✨ ZAP! A carta inimiga virou pó e o Bruxo criou uma Poção para você!");
             return; 
         }
 
         // 🔮 3º PRIORIDADE: BRUXO (ROUBAR 6)
         else if (typeof modoBruxoRoubar !== 'undefined' && modoBruxoRoubar === true) {
             let idAlvo = idDoPacote.replace("pacote-", "");
-            converterCartaRoubada(idAlvo, true); // 🩹 rouba e garante que fica 100% sua (classe + ataque)
+            converterCartaRoubadaPeloBruxo(idAlvo, true); // 🩹 rouba e preserva também passivas especiais como a do Slime
             
             let pacoteBruxo = document.getElementById("pacote-" + idBruxoAtivo);
             if (pacoteBruxo) pacoteBruxo.remove(); // Bruxo some
@@ -1849,6 +2158,24 @@ function converterCartaRoubada(idUnico, novoDonoEhJ1) {
     let vidaAtual = vidaEl ? vidaEl.innerText : "0";
     let danoAtual = danoEl ? danoEl.innerText : "0";
     let estavaCongelada = pacoteAtual.classList.contains("congelada");
+    // O Esqueleto é reconstruído pelo roubo do Bruxo. Guardamos a família
+    // antes de trocar o elemento para religar sua passiva no novo lado.
+    let familiaEsqueletoRoubado = pacoteAtual.dataset.inimigoEspecial === "esqueleto"
+        ? pacoteAtual.dataset.esqueletoFamilia
+        : null;
+    let eraZumbi = pacoteAtual.dataset.inimigoEspecial === "zumbi";
+    let eraAicer = pacoteAtual.dataset.inimigoEspecial === "aicer";
+    let eraEcto = pacoteAtual.dataset.inimigoEspecial === "ecto";
+    let eraFraguer = pacoteAtual.dataset.inimigoEspecial === "fraguer";
+    let eraFraguerFundido = pacoteAtual.dataset.inimigoEspecial === "fraguer-fundido";
+    let eraSpiritista = pacoteAtual.dataset.inimigoEspecial === "spiritista";
+    let eraSeteNegativo = pacoteAtual.dataset.inimigoEspecial === "sete-negativo";
+    // O bônus do Fraguer pertence à quantidade de aliados do lado antigo.
+    // No roubo conservamos apenas seu dano próprio; o novo grupo recalcula o bônus.
+    if (eraFraguer) {
+        let bonusFraguerAnterior = Number(pacoteAtual.dataset.fraguerBonus) || 0;
+        danoAtual = String(Math.max(0, (parseFloat(danoAtual) || 0) - bonusFraguerAnterior));
+    }
 
     let cartaObj = { nome: nome, idUnico: idUnico, img: imgSrc, vida: vidaAtual, dano: danoAtual };
     let classeCss = novoDonoEhJ1 ? "carta-aliada" : "carta-inimiga";
@@ -1869,7 +2196,203 @@ function converterCartaRoubada(idUnico, novoDonoEhJ1) {
     if (novoDonoEhJ1) jogarCarta("pacote-" + idUnico);
     else jogarCartaInimigo("pacote-" + idUnico);
 
+    if (familiaEsqueletoRoubado !== null
+        && typeof window.rpgRestaurarEsqueletoRoubado === "function") {
+        window.rpgRestaurarEsqueletoRoubado(idUnico, novoDonoEhJ1, familiaEsqueletoRoubado);
+    }
+    if (eraZumbi && typeof window.rpgRegistrarZumbi === "function") {
+        window.rpgRegistrarZumbi(idUnico, novoDonoEhJ1);
+    }
+    if (eraAicer && typeof window.rpgRegistrarAicer === "function") {
+        window.rpgRegistrarAicer(idUnico, novoDonoEhJ1);
+    }
+    if (eraEcto && typeof window.rpgRegistrarEcto === "function") {
+        window.rpgRegistrarEcto(idUnico, novoDonoEhJ1);
+    }
+    if ((eraFraguer || eraFraguerFundido) && typeof window.rpgRegistrarFraguer === "function") {
+        window.rpgRegistrarFraguer(idUnico, novoDonoEhJ1, eraFraguerFundido);
+    }
+    if (eraSpiritista && typeof window.rpgRegistrarSpiritista === "function") {
+        window.rpgRegistrarSpiritista(idUnico, novoDonoEhJ1);
+    }
+    if (eraSeteNegativo && typeof window.rpgRegistrarSeteNegativo === "function") {
+        window.rpgRegistrarSeteNegativo(idUnico, novoDonoEhJ1);
+    }
+    if (cartaSilenciadaPeloEcto(idUnico)) aplicarInterfaceSilencioEcto(idUnico);
+
     return novoElemento;
+}
+
+// Roubar um Slime significa roubar a família inteira. Cada integrante preserva
+// a vida e o dano atuais, todos mudam de lado e continuam ligados no mesmo estágio.
+function converterCartaRoubadaPeloBruxo(idUnico, novoDonoEhJ1) {
+    let idsFamilia = typeof window.rpgObterIdsFamiliaSlime === "function"
+        ? window.rpgObterIdsFamiliaSlime(idUnico)
+        : [];
+
+    if (idsFamilia.length === 0
+        || typeof window.rpgPrepararRouboFamiliaSlime !== "function"
+        || typeof window.rpgRegistrarFamiliaSlimeRoubada !== "function") {
+        return converterCartaRoubada(idUnico, novoDonoEhJ1);
+    }
+
+    let transferencia = window.rpgPrepararRouboFamiliaSlime(idUnico);
+    if (!transferencia) return converterCartaRoubada(idUnico, novoDonoEhJ1);
+
+    let cartaEscolhida = null;
+    let idsConvertidos = [];
+    transferencia.membros.forEach(idMembro => {
+        let convertida = converterCartaRoubada(idMembro, novoDonoEhJ1);
+        if (convertida) {
+            idsConvertidos.push(idMembro);
+            if (idMembro === idUnico) cartaEscolhida = convertida;
+        }
+    });
+    window.rpgRegistrarFamiliaSlimeRoubada(idsConvertidos, novoDonoEhJ1, transferencia.estagio);
+    return cartaEscolhida || (idsConvertidos.length > 0 ? document.getElementById("pacote-" + idsConvertidos[0]) : null);
+}
+
+// 🧟 ZUMBI — remove os bônus, penalidades e estados acumulados da vítima antes
+// de ela trocar de lado. A identidade e a habilidade natural da carta continuam;
+// o que é apagado são somente as alterações conquistadas durante a partida.
+function limparEstadosDaVitimaZumbi(idUnico) {
+    [bonusUnidao, goblinJaAtacouNesteTurno, goblinAtaquesGanhos, viajantesJaUsaram,
+        bloqueioNecro, pocaoVeluxAtiva, escudoGuerreiro, barrilJaImpactou,
+        splashBarbaroAtivo, duracaoGelo, geloBumerskeletonAtivos,
+        especialFixoBumerskeleton, especialFixoSeparado, bonusVampi7Sozinho,
+        cartasCongeladas, cavalosDeTroiaAtivos, incendiarioCiclo,
+        incendiarioFasesVisuais, separadaoDividido, separadaoAtacantesNaSequencia,
+        portableDuracao, buffsAllsforms, unidadesVivasTrios, ctrlV
+    ].forEach(estadoCarta => {
+        if (estadoCarta && typeof estadoCarta === "object") delete estadoCarta[idUnico];
+    });
+    if (typeof orkBuffado !== "undefined") delete orkBuffado[idUnico];
+    if (typeof ladroesQueJaRoubaram !== "undefined") delete ladroesQueJaRoubaram[idUnico];
+    if (typeof cavaleiroAtivado !== "undefined") delete cavaleiroAtivado[idUnico];
+    if (typeof window.mensageirosEmArea !== "undefined") delete window.mensageirosEmArea[idUnico];
+    delete cartasSilenciadasEcto[idUnico];
+
+    Object.keys(venenosMago).forEach(idEfeito => {
+        if (venenosMago[idEfeito] && venenosMago[idEfeito].idAlvo === idUnico) delete venenosMago[idEfeito];
+    });
+    Object.keys(alvosDoBarril).forEach(idBarril => {
+        if (idBarril === idUnico || alvosDoBarril[idBarril] === idUnico) delete alvosDoBarril[idBarril];
+    });
+    Object.keys(cartasProtegidas).forEach(idProtegido => {
+        if (idProtegido === idUnico || cartasProtegidas[idProtegido] === idUnico) delete cartasProtegidas[idProtegido];
+    });
+    Object.keys(incendiarioAlvos).forEach(idIncendiario => {
+        incendiarioAlvos[idIncendiario] = (incendiarioAlvos[idIncendiario] || []).filter(id => id !== idUnico);
+    });
+    Object.keys(parceriaSeparado).forEach(idSeparado => {
+        if (idSeparado === idUnico || parceriaSeparado[idSeparado] === idUnico) {
+            delete parceriaSeparado[idSeparado];
+            delete separadaoDividido[idSeparado];
+            delete separadaoAtacantesNaSequencia[idSeparado];
+        }
+    });
+}
+
+function finalizarVisualVitimaZumbi(idUnico) {
+    let pacote = document.getElementById("pacote-" + idUnico);
+    if (!pacote) return;
+    pacote.classList.remove("congelada", "carta-envenenada-mago", "carta-com-polvora", "carta-em-chamas");
+    pacote.style.filter = "none";
+    pacote.querySelectorAll(".aura-veneno-mago, .fumaca-veneno-mago, .efeito-gelo-bumerskeleton, .aura-escudo-carta, .escudo-fosco-carta").forEach(el => el.remove());
+}
+
+// Converte a carta no próprio campo do Zumbi. Vida e dano voltam aos valores
+// originais, com a única exceção da vida, que nasce pela metade.
+function converterVitimaZumbi(idUnico, novoDonoEhJ1) {
+    let pacoteOriginal = document.getElementById("pacote-" + idUnico);
+    if (!pacoteOriginal) return null;
+
+    let nomeExibido = pacoteOriginal.querySelector(".nome-carta")?.innerText?.trim() || "Carta";
+    let nomeBase = nomeExibido.replace(/\s*\(S\/Hab\)\s*$/i, "");
+    let tipoEspecial = pacoteOriginal.dataset.inimigoEspecial || "";
+
+    // A família Slime é uma carta conceitual: todos os corpos sobreviventes mudam
+    // de lado juntos e cada um recomeça com metade da vida de seu estágio.
+    if (tipoEspecial === "slime") {
+        let estagio = Math.max(0, Math.min(3, Number(pacoteOriginal.dataset.slimeEstagio) || 0));
+        let atributos = [
+            { vida: 10, dano: 1 }, { vida: 4, dano: 2 },
+            { vida: 2, dano: 3 }, { vida: 1, dano: 4 }
+        ][estagio];
+        let idsFamilia = typeof window.rpgObterIdsFamiliaSlime === "function"
+            ? window.rpgObterIdsFamiliaSlime(idUnico)
+            : [idUnico];
+        idsFamilia.forEach(limparEstadosDaVitimaZumbi);
+        let convertida = converterCartaRoubadaPeloBruxo(idUnico, novoDonoEhJ1);
+        idsFamilia.forEach(idMembro => {
+            let vida = document.getElementById("vida-" + idMembro);
+            let dano = document.getElementById("dano-" + idMembro);
+            if (vida) vida.innerText = atributos.vida / 2;
+            if (dano) dano.innerText = atributos.dano;
+            finalizarVisualVitimaZumbi(idMembro);
+        });
+        if (typeof atualizarTodosUnidoes === "function") atualizarTodosUnidoes();
+        return convertida ? { nome: "Slime", quantidade: idsFamilia.length } : null;
+    }
+
+    let base = bancoDeCartas.find(c => c.nome === nomeBase);
+    let vidaOriginal = base ? Number(base.vida) : (tipoEspecial === "esqueleto" ? 1 : tipoEspecial === "zumbi" ? 4 : tipoEspecial === "aicer" ? 3 : tipoEspecial === "ecto" ? 2 : tipoEspecial === "fraguer" ? 4 : tipoEspecial === "fraguer-fundido" ? 2 : tipoEspecial === "spiritista" ? 10 : tipoEspecial === "sete-negativo" ? 5 : Number(document.getElementById("vida-" + idUnico)?.innerText));
+    let danoOriginal = base ? Number(base.dano) : (tipoEspecial === "esqueleto" ? 1 : tipoEspecial === "zumbi" ? 2 : tipoEspecial === "aicer" ? 1 : tipoEspecial === "ecto" ? 3 : tipoEspecial === "fraguer" ? 1 : tipoEspecial === "fraguer-fundido" ? 8 : tipoEspecial === "spiritista" ? 1 : tipoEspecial === "sete-negativo" ? 0 : Number(document.getElementById("dano-" + idUnico)?.innerText));
+    if (!Number.isFinite(vidaOriginal)) vidaOriginal = 1;
+    if (!Number.isFinite(danoOriginal)) danoOriginal = 0;
+
+    limparEstadosDaVitimaZumbi(idUnico);
+    let convertida = converterCartaRoubada(idUnico, novoDonoEhJ1);
+    if (!convertida) return null;
+
+    let vida = document.getElementById("vida-" + idUnico);
+    let dano = document.getElementById("dano-" + idUnico);
+    if (vida) vida.innerText = Math.max(0.5, vidaOriginal / 2);
+    if (dano) dano.innerText = danoOriginal;
+    finalizarVisualVitimaZumbi(idUnico);
+
+    // converterCartaRoubada já religa o Esqueleto. O Zumbi também precisa
+    // recuperar sua própria passiva caso seja a carta infectada.
+    if (tipoEspecial === "zumbi" && typeof window.rpgRegistrarZumbi === "function") {
+        window.rpgRegistrarZumbi(idUnico, novoDonoEhJ1);
+    }
+    if (tipoEspecial === "aicer" && typeof window.rpgRegistrarAicer === "function") {
+        window.rpgRegistrarAicer(idUnico, novoDonoEhJ1);
+    }
+    if (tipoEspecial === "ecto" && typeof window.rpgRegistrarEcto === "function") {
+        window.rpgRegistrarEcto(idUnico, novoDonoEhJ1);
+    }
+    if ((tipoEspecial === "fraguer" || tipoEspecial === "fraguer-fundido")
+        && typeof window.rpgRegistrarFraguer === "function") {
+        window.rpgRegistrarFraguer(idUnico, novoDonoEhJ1, tipoEspecial === "fraguer-fundido");
+    }
+    if (tipoEspecial === "spiritista" && typeof window.rpgRegistrarSpiritista === "function") {
+        window.rpgRegistrarSpiritista(idUnico, novoDonoEhJ1);
+    }
+    if (tipoEspecial === "sete-negativo" && typeof window.rpgRegistrarSeteNegativo === "function") {
+        window.rpgRegistrarSeteNegativo(idUnico, novoDonoEhJ1);
+    }
+    if (typeof atualizarTodosUnidoes === "function") atualizarTodosUnidoes();
+    return { nome: nomeBase, quantidade: 1 };
+}
+
+window.rpgConverterVitimaZumbi = converterVitimaZumbi;
+
+// Transformar um Slime em poção também consome a família inteira, mas cria apenas
+// uma poção: todas as formas pertencem à mesma carta original.
+function transformarFamiliaSlimeEmPocao(idPacoteAlvo) {
+    let idPuro = idPacoteAlvo.replace("pacote-", "");
+    let idsFamilia = typeof window.rpgObterIdsFamiliaSlime === "function"
+        ? window.rpgObterIdsFamiliaSlime(idPuro)
+        : [];
+    if (idsFamilia.length > 0 && typeof window.rpgApagarFamiliaSlime === "function") {
+        return window.rpgApagarFamiliaSlime(idPuro);
+    }
+
+    let pacote = document.getElementById(idPacoteAlvo);
+    if (!pacote) return 0;
+    pacote.remove();
+    return 1;
 }
 
 // 🔥 Cura TODAS as tropas de um lado — campo e mão — ignorando suportes/poções.
@@ -2043,6 +2566,9 @@ function jogarCarta(idDoPacote, somentePrepararCampo = false) {
 
         if (bloqueioNecro[idSemPacote] && bloqueioNecro[idSemPacote] > 0) return narrar("⏳ FADIGA! Esta carta precisa descansar.");
         
+        if (typeof window.rpgMarcarMovimentacaoEsqueleto === "function") {
+            window.rpgMarcarMovimentacaoEsqueleto(idSemPacote);
+        }
         document.getElementById("campo-j1").appendChild(pacoteCarta);
         narrar("Você invocou uma criatura no campo!");
 
@@ -2089,14 +2615,16 @@ imagem.onclick = function() {
             let maoDoDonoDoBruxo = oBruxoEAliado ? "mao-j1" : "mao-j2";
 
             animarPocaoBruxo(idBruxoAtivo, idDoPacote.replace("pacote-", ""), "transformar");
-            pacoteAlvo.remove(); // Remove a carta inimiga do campo
+            let totalTransformado = transformarFamiliaSlimeEmPocao(idDoPacote);
             
             // Cria a poção na mão de quem usou o Bruxo (tamanho correto)
             gerarPocaoAleatoria(maoDoDonoDoBruxo); 
             
             modoBruxoTransformar = false;
             idBruxoAtivo = null;
-            narrar("✨ ZAP! A carta inimiga virou pó e o Bruxo destilou uma poção pequena na sua mão!");
+            narrar(totalTransformado > 1
+                ? `✨ ZAP! A família Slime inteira (${totalTransformado} cartas) virou uma única poção pequena na sua mão!`
+                : "✨ ZAP! A carta inimiga virou pó e o Bruxo destilou uma poção pequena na sua mão!");
             return; 
         }
 
@@ -2118,7 +2646,7 @@ imagem.onclick = function() {
 
             // 1. ROUBA A CARTA: reconstrói no campo de quem usou o Bruxo, já 100% do novo dono
             let origemRouboBruxo = animarPocaoBruxo(idBruxoAtivo, idDoPacote.replace("pacote-", ""), "roubar");
-            let cartaRoubadaBruxo = converterCartaRoubada(idDoPacote.replace("pacote-", ""), oBruxoEAliado);
+            let cartaRoubadaBruxo = converterCartaRoubadaPeloBruxo(idDoPacote.replace("pacote-", ""), oBruxoEAliado);
             animarCartaRoubadaBruxo(cartaRoubadaBruxo, origemRouboBruxo);
             
             // 2. O BRUXO VIRA POÇÃO: Remove o Bruxo do campo
@@ -2248,6 +2776,9 @@ function jogarCartaInimigo(idDoPacote, somentePrepararCampo = false) {
         }
         if (bloqueioNecro[idSemPacote] && bloqueioNecro[idSemPacote] > 0) return narrar("⏳ FADIGA! A carta precisa descansar.");
 
+        if (typeof window.rpgMarcarMovimentacaoEsqueleto === "function") {
+            window.rpgMarcarMovimentacaoEsqueleto(idSemPacote);
+        }
         document.getElementById("campo-j2").appendChild(pacoteCarta);
         narrar("O Oponente invocou uma criatura no campo!");
 
@@ -2336,12 +2867,14 @@ function jogarCartaInimigo(idDoPacote, somentePrepararCampo = false) {
             let maoDoDonoDoBruxo = oBruxoEAliado ? "mao-j1" : "mao-j2";
 
             animarPocaoBruxo(idBruxoAtivo, idDoPacote.replace("pacote-", ""), "transformar");
-            pacoteAlvo.remove(); 
+            let totalTransformado = transformarFamiliaSlimeEmPocao(idDoPacote);
             gerarPocaoAleatoria(maoDoDonoDoBruxo); 
             
             modoBruxoTransformar = false;
             idBruxoAtivo = null;
-            narrar("✨ ZAP! A carta inimiga virou pó e destilou uma poção pequena na sua mão!");
+            narrar(totalTransformado > 1
+                ? `✨ ZAP! A família Slime inteira (${totalTransformado} cartas) virou uma única poção pequena!`
+                : "✨ ZAP! A carta inimiga virou pó e destilou uma poção pequena na sua mão!");
             return; 
         }
 
@@ -2357,7 +2890,7 @@ function jogarCartaInimigo(idDoPacote, somentePrepararCampo = false) {
             let maoDoDonoDoBruxo = oBruxoEAliado ? "mao-j1" : "mao-j2";
 
             let origemRouboBruxo = animarPocaoBruxo(idBruxoAtivo, idDoPacote.replace("pacote-", ""), "roubar");
-            let cartaRoubadaBruxo = converterCartaRoubada(idDoPacote.replace("pacote-", ""), oBruxoEAliado); // rouba a carta, já 100% do novo dono
+            let cartaRoubadaBruxo = converterCartaRoubadaPeloBruxo(idDoPacote.replace("pacote-", ""), oBruxoEAliado); // rouba a carta, já 100% do novo dono
             animarCartaRoubadaBruxo(cartaRoubadaBruxo, origemRouboBruxo);
             animarBruxoVirandoPocao(idBruxoAtivo);
             pacoteBruxo.remove(); // Some com o bruxo
@@ -2397,6 +2930,10 @@ function jogarCartaInimigo(idDoPacote, somentePrepararCampo = false) {
 }
 
 function criarHTMLCarta(carta, funcaoJogar, classeCss, ehAliado) {
+    // Última proteção da interface: mesmo que uma carta venha de cópia, roubo ou
+    // transformação com um valor antigo inválido, nunca renderiza vida abaixo de zero.
+    let vidaNumericaSegura = Number(carta.vida);
+    let vidaExibida = Number.isFinite(vidaNumericaSegura) ? Math.max(0, vidaNumericaSegura) : 0;
     // 🩹 CORREÇÃO: os dois botões apareciam em QUALQUER Curandeiro, dos dois lados — deixando
     // curar o time errado sem querer. Agora só aparece o botão do lado certo da carta.
     let btnCura = (carta.nome === 'Curandeiro' && ehAliado) ? `<button onclick="iniciarCura('${carta.idUnico}')" style="background-color: green; color: white; width: 100%; margin-bottom: 2px; cursor: pointer;">Curar 💚</button>` : '';
@@ -2442,7 +2979,7 @@ function criarHTMLCarta(carta, funcaoJogar, classeCss, ehAliado) {
             <img src="${carta.img}" alt="${carta.nome}" onclick="${funcaoJogar}('pacote-${carta.idUnico}')">
             
             <div class="status-container">
-                <span class="status-vida">❤️ <span id="vida-${carta.idUnico}">${carta.vida}</span></span>
+                <span class="status-vida">❤️ <span id="vida-${carta.idUnico}">${vidaExibida}</span></span>
                 <span class="status-ataque">⚔️ <span id="dano-${carta.idUnico}">${carta.dano}</span></span>
             </div>
 
@@ -2454,6 +2991,10 @@ function criarHTMLCarta(carta, funcaoJogar, classeCss, ehAliado) {
 function iniciarAtaque(nomeCarta, idUnico) {
     if (barrilBarbaroEmAnimacao) return narrar("🪵 O Barril de Bárbaro ainda está rolando!");
     nomeCarta = obterNomeEfetivoCarta(idUnico, nomeCarta);
+    if (cartaSilenciadaPeloEcto(idUnico)) {
+        nomeCarta = "";
+        ultimaCartaJogador = null;
+    }
     modoAlvoBarril = false; // 🚀 Cancela qualquer mira do barril se clicar noutro ataque
 
     // ❄️ TRAVA DE ATAQUE (SEU LADO)
@@ -2461,6 +3002,23 @@ function iniciarAtaque(nomeCarta, idUnico) {
     if (pacoteCarta && pacoteCarta.classList.contains("congelada")) {
         narrar("❄️ Esta carta está congelada e não pode atacar nesta rodada!");
         return; // Cancela a execução do ataque
+    }
+
+    // 👥 No Especial dividido, qualquer integrante pode abrir a sequência. Depois que um
+    // deles atacou, ele não pode ocupar também o segundo ataque: o jogo espera o parceiro.
+    let idSequenciaSeparado = obterSeparadaoDivididoAtivo(idUnico);
+    if (idSequenciaSeparado
+        && (separadaoAtacantesNaSequencia[idSequenciaSeparado] || []).includes(idUnico)) {
+        let outroId = idUnico === idSequenciaSeparado ? parceriaSeparado[idSequenciaSeparado] : idSequenciaSeparado;
+        let outroPacote = document.getElementById("pacote-" + outroId);
+        let outroNome = outroPacote?.querySelector(".nome-carta")?.innerText?.trim() || "a outra carta da dupla";
+        return narrar(`👥 Esta carta já atacou nesta sequência. Agora ataque com ${outroNome}.`);
+    }
+    let sequenciaPendenteJogador = obterSequenciaSeparadoPendenteDoLado("j1");
+    if (sequenciaPendenteJogador && idUnico !== sequenciaPendenteJogador.idObrigatorio) {
+        let outroPacote = document.getElementById("pacote-" + sequenciaPendenteJogador.idObrigatorio);
+        let outroNome = outroPacote?.querySelector(".nome-carta")?.innerText?.trim() || "a outra carta da dupla";
+        return narrar(`👥 Termine o Especial dividido primeiro: agora é a vez de ${outroNome}.`);
     }
 
     // 👥 SEPARADO/SEPARADOIS — se já tem parceira viva, não ataca pelo próprio botão:
@@ -2492,6 +3050,21 @@ function iniciarAtaque(nomeCarta, idUnico) {
 
     let cartaAtacante = bancoDeCartas.find(c => c.nome === nomeCarta);
     if (cartaAtacante) ultimaCartaJogador = cartaAtacante;
+    else if (!cartaSilenciadaPeloEcto(idUnico) && pacoteCarta?.dataset.inimigoEspecial === "ecto") {
+        ultimaCartaJogador = { id: "ecto", nome: "Ecto", vida: 2, dano: 3, img: "ecto-provisorio.svg" };
+    }
+    else if (!cartaSilenciadaPeloEcto(idUnico) && pacoteCarta?.dataset.inimigoEspecial === "fraguer") {
+        ultimaCartaJogador = { id: "fraguer", nome: "Fraguer", vida: 4, dano: 1, img: "fraguer-provisorio.svg" };
+    }
+    else if (!cartaSilenciadaPeloEcto(idUnico) && pacoteCarta?.dataset.inimigoEspecial === "fraguer-fundido") {
+        ultimaCartaJogador = { id: "fraguer-fundido", nome: "Fraguer Fundido", vida: 2, dano: 8, img: "fraguer-fundido-provisorio.svg" };
+    }
+    else if (!cartaSilenciadaPeloEcto(idUnico) && pacoteCarta?.dataset.inimigoEspecial === "spiritista") {
+        ultimaCartaJogador = { id: "spiritista", nome: "Spiritista", vida: 10, dano: 1, img: "spiritista-provisorio.svg" };
+    }
+    else if (!cartaSilenciadaPeloEcto(idUnico) && pacoteCarta?.dataset.inimigoEspecial === "sete-negativo") {
+        ultimaCartaJogador = { id: "sete-negativo", nome: "7 Negativo", vida: 5, dano: 0, img: "sete-negativo-provisorio.svg" };
+    }
     
     let campoInimigo = document.getElementById("campo-j2");
     let inimigosNoCampo = Array.from(campoInimigo.getElementsByClassName("carta-inimiga"));
@@ -2516,24 +3089,19 @@ function iniciarAtaque(nomeCarta, idUnico) {
     }
 
     if (nomeCarta === 'Trio de Goblin') {
-        if (vidaAtual >= 5) { danoPreparado = 2; narrar("⚔️ O Trio de Goblin está completo e ataca com 2 de dano!"); } 
-        else if (vidaAtual >= 3) { danoPreparado = 1; narrar("⚔️ Um goblin caiu! Os dois restantes atacam com 1 de dano."); } 
-        else { danoPreparado = 1; }
+        let goblinsVivos = unidadesVivasTrios[idUnico] || quantidadeUnidadesDoTrio(vidaAtual, configuracaoDoTrio(nomeCarta));
+        if (goblinsVivos === 3) narrar(`⚔️ O Trio de Goblin está completo e ataca com ${danoPreparado} de dano!`);
+        else if (goblinsVivos === 2) narrar(`⚔️ Um Goblin caiu! Os dois restantes atacam com ${danoPreparado} de dano.`);
+        else narrar(`⚔️ Restou apenas um Goblin, que ataca com ${danoPreparado} de dano.`);
     }
 
     // 👊 TRIO DE BÁRBAROS — cada Bárbaro representa 3 pontos de vida.
     // O dano diminui conforme cada integrante do trio cai: 3 → 2 → 1.
     if (nomeCarta === 'Trio de Bárbaros') {
-        if (vidaAtual >= 7) {
-            danoPreparado = 3;
-            narrar("⚔️ O Trio de Bárbaros está completo e ataca com 3 de dano!");
-        } else if (vidaAtual >= 4) {
-            danoPreparado = 2;
-            narrar("⚔️ Um Bárbaro caiu! Os dois restantes atacam com 2 de dano.");
-        } else {
-            danoPreparado = 1;
-            narrar("⚔️ Restou apenas um Bárbaro, que ataca com 1 de dano.");
-        }
+        let barbarosVivos = unidadesVivasTrios[idUnico] || quantidadeUnidadesDoTrio(vidaAtual, configuracaoDoTrio(nomeCarta));
+        if (barbarosVivos === 3) narrar(`⚔️ O Trio de Bárbaros está completo e ataca com ${danoPreparado} de dano!`);
+        else if (barbarosVivos === 2) narrar(`⚔️ Um Bárbaro caiu! Os dois restantes atacam com ${danoPreparado} de dano.`);
+        else narrar(`⚔️ Restou apenas um Bárbaro, que ataca com ${danoPreparado} de dano.`);
     }
 
     let ageComoGoblin = (nomeCarta === 'Goblin') || (nomeCarta === 'Trio de Goblin' && vidaAtual <= 2);
@@ -2599,11 +3167,11 @@ function receberAtaque(idVidaAlvo, idPacoteAlvo) {
             return narrar("🐴 O Cavalo de Tróia não pode ser atacado! Escolha outra carta.");
         }
 
-        // 🦇 VAMPI7: só pode ser atacado quando estiver com 3 ou mais de vida.
+        // 🦇 VAMPI7: abaixo de 3 de vida só fica intangível enquanto ainda tiver aliados.
+        // Quando é a última carta do time, materializa para a partida conseguir terminar.
         if (nomeAlvo.trim() === 'Vampi7') {
-            let vidaVampi7 = parseFloat(document.getElementById(idVidaAlvo).innerText) || 0;
-            if (vidaVampi7 < 3) {
-                return narrar("🦇 O Vampi7 só pode ser atacado com 3 ou mais de vida! Escolha outra carta.");
+            if (vampi7EstaIntangivel(pacoteAlvo)) {
+                return narrar("🦇 O Vampi7 está intangível enquanto possui aliados! Escolha outra carta.");
             }
         }
 
@@ -2620,6 +3188,11 @@ function receberAtaque(idVidaAlvo, idPacoteAlvo) {
                 delete cartasProtegidas[idPuro]; // Barril já morreu, quebra o vínculo.
             }
         }
+
+        // 👻 O Ecto apaga primeiro a habilidade e qualquer escudo aplicado à
+        // carta. Por isso seu golpe atravessa tanto o escudo do Guerreiro
+        // quanto o concedido pelo suporte Escudo.
+        aplicarToqueEctoAntesDoDano(idPuro);
 
         // 🛡️ BLOQUEIO DO GUERREIRO
         if (escudoGuerreiro[idPuro] && Number(danoPreparado) > 0) {
@@ -2643,7 +3216,9 @@ function receberAtaque(idVidaAlvo, idPacoteAlvo) {
         // e isso fazia o cálculo do dano sair errado ao atacar essas cartas.
         // 🩹 CORREÇÃO: nunca deixa a vida mostrar número negativo — trava em 0.
         let vidaAtual = Math.max(0, parseFloat(textoVida.innerText) - danoPreparado);
+        let vidaAntesDoGolpe = parseFloat(textoVida.innerText);
         textoVida.innerText = vidaAtual;
+        sincronizarDanoDoTrio(idPuro, vidaAntesDoGolpe, vidaAtual);
         
         try {
             if (ultimaCartaJogador && ultimaCartaJogador.nome === "Bumerskeleton") {
@@ -2701,27 +3276,14 @@ function receberAtaque(idVidaAlvo, idPacoteAlvo) {
 
         // 🦇 VAMPI7 — ataca junto de qualquer carta do mesmo time que atacar.
         dispararVampi7JuntoDoAtaque(ultimoIdQueAtacou, idPacoteAlvo);
+        dispararSeteNegativoJuntoDoAtaque(ultimoIdQueAtacou, idPacoteAlvo);
         // 🛸 PORTABLE — ataca junto enquanto a bateria durar.
         dispararPortableJuntoDoAtaque(ultimoIdQueAtacou, idPacoteAlvo);
 
         modoAtaque = false; 
         danoPreparado = 0; 
 
-        // 👥 Se este ataque fazia parte da habilidade dividida do Separado, só passa a vez
-        // quando as DUAS cartas já tiverem atacado (uma pode atacar, esperar, e a outra
-        // ataca em seguida, ainda no mesmo turno).
-        if (idSeparadoAtivoDividido) {
-            separadaoDividido[idSeparadoAtivoDividido]--;
-            if (separadaoDividido[idSeparadoAtivoDividido] > 0) {
-                narrar("👥 Falta a outra carta da dupla atacar ainda! Clique em Atacar nela e escolha outro alvo.");
-            } else {
-                animarReuniaoSeparado(idSeparadoAtivoDividido);
-                delete separadaoDividido[idSeparadoAtivoDividido];
-                passarTurno();
-            }
-        } else {
-            passarTurno();
-        }
+        passarTurno();
     } else {
         narrar("Você precisa clicar no botão 'Atacar' primeiro!");
     }
@@ -2741,6 +3303,16 @@ function inimigoAtacar(idUnico) {
         return; // Cancela o ataque do oponente
     }
 
+    let idSequenciaSeparadoInimigo = obterSeparadaoDivididoAtivo(idUnico);
+    if (idSequenciaSeparadoInimigo
+        && (separadaoAtacantesNaSequencia[idSequenciaSeparadoInimigo] || []).includes(idUnico)) {
+        return narrar("👥 Esta carta da dupla inimiga já atacou. Agora falta a outra.");
+    }
+    let sequenciaPendenteInimigo = obterSequenciaSeparadoPendenteDoLado("j2");
+    if (sequenciaPendenteInimigo && idUnico !== sequenciaPendenteInimigo.idObrigatorio) {
+        return narrar("👥 O oponente precisa concluir o ataque com a outra carta da dupla.");
+    }
+
     if (suportePreparado !== null) {
         equiparSuporte(idUnico);
         return;
@@ -2756,8 +3328,27 @@ function inimigoAtacar(idUnico) {
     let pacoteInimigo = document.getElementById("pacote-" + idUnico);
     let nomeCartaExibida = pacoteInimigo.querySelector(".nome-carta").innerText;
     let nomeCartaInimiga = obterNomeEfetivoCarta(idUnico, nomeCartaExibida);
+    if (cartaSilenciadaPeloEcto(idUnico)) {
+        nomeCartaInimiga = "";
+        ultimaCartaOponente = null;
+    }
     let cartaAtacanteInimigo = bancoDeCartas.find(c => c.nome === nomeCartaInimiga);
     if (cartaAtacanteInimigo) ultimaCartaOponente = cartaAtacanteInimigo;
+    else if (!cartaSilenciadaPeloEcto(idUnico) && pacoteInimigo?.dataset.inimigoEspecial === "ecto") {
+        ultimaCartaOponente = { id: "ecto", nome: "Ecto", vida: 2, dano: 3, img: "ecto-provisorio.svg" };
+    }
+    else if (!cartaSilenciadaPeloEcto(idUnico) && pacoteInimigo?.dataset.inimigoEspecial === "fraguer") {
+        ultimaCartaOponente = { id: "fraguer", nome: "Fraguer", vida: 4, dano: 1, img: "fraguer-provisorio.svg" };
+    }
+    else if (!cartaSilenciadaPeloEcto(idUnico) && pacoteInimigo?.dataset.inimigoEspecial === "fraguer-fundido") {
+        ultimaCartaOponente = { id: "fraguer-fundido", nome: "Fraguer Fundido", vida: 2, dano: 8, img: "fraguer-fundido-provisorio.svg" };
+    }
+    else if (!cartaSilenciadaPeloEcto(idUnico) && pacoteInimigo?.dataset.inimigoEspecial === "spiritista") {
+        ultimaCartaOponente = { id: "spiritista", nome: "Spiritista", vida: 10, dano: 1, img: "spiritista-provisorio.svg" };
+    }
+    else if (!cartaSilenciadaPeloEcto(idUnico) && pacoteInimigo?.dataset.inimigoEspecial === "sete-negativo") {
+        ultimaCartaOponente = { id: "sete-negativo", nome: "7 Negativo", vida: 5, dano: 0, img: "sete-negativo-provisorio.svg" };
+    }
 
     // 👥 SEPARADO/SEPARADOIS (inimigo) — mesma trava: só ataca puxado pela parceira, exceto
     // durante a habilidade do dado 6 (ataque dividido).
@@ -2798,23 +3389,18 @@ function inimigoAtacar(idUnico) {
     }
 
     if (nomeCartaInimiga === 'Trio de Goblin') {
-        if (vidaAtual >= 5) { danoInimigoPreparado = 2; narrar("⚔️ O Trio de Goblin inimigo ataca com 2 de dano!"); } 
-        else if (vidaAtual >= 3) { danoInimigoPreparado = 1; narrar("⚔️ Um goblin inimigo caiu! Os dois restantes atacam com 1 de dano."); } 
-        else { danoInimigoPreparado = 1; }
+        let goblinsVivos = unidadesVivasTrios[idUnico] || quantidadeUnidadesDoTrio(vidaAtual, configuracaoDoTrio(nomeCartaInimiga));
+        if (goblinsVivos === 3) narrar(`⚔️ O Trio de Goblin inimigo está completo e ataca com ${danoInimigoPreparado} de dano!`);
+        else if (goblinsVivos === 2) narrar(`⚔️ Um Goblin inimigo caiu! Os dois restantes atacam com ${danoInimigoPreparado} de dano.`);
+        else narrar(`⚔️ Restou um Goblin inimigo, que ataca com ${danoInimigoPreparado} de dano.`);
     }
 
     // 👊 Mesma regressão para o Trio de Bárbaros controlado pelo oponente/bot.
     if (nomeCartaInimiga === 'Trio de Bárbaros') {
-        if (vidaAtual >= 7) {
-            danoInimigoPreparado = 3;
-            narrar("⚔️ O Trio de Bárbaros inimigo está completo e ataca com 3 de dano!");
-        } else if (vidaAtual >= 4) {
-            danoInimigoPreparado = 2;
-            narrar("⚔️ Um Bárbaro inimigo caiu! Os dois restantes atacam com 2 de dano.");
-        } else {
-            danoInimigoPreparado = 1;
-            narrar("⚔️ Restou um Bárbaro inimigo, que ataca com 1 de dano.");
-        }
+        let barbarosVivos = unidadesVivasTrios[idUnico] || quantidadeUnidadesDoTrio(vidaAtual, configuracaoDoTrio(nomeCartaInimiga));
+        if (barbarosVivos === 3) narrar(`⚔️ O Trio de Bárbaros inimigo está completo e ataca com ${danoInimigoPreparado} de dano!`);
+        else if (barbarosVivos === 2) narrar(`⚔️ Um Bárbaro inimigo caiu! Os dois restantes atacam com ${danoInimigoPreparado} de dano.`);
+        else narrar(`⚔️ Restou um Bárbaro inimigo, que ataca com ${danoInimigoPreparado} de dano.`);
     }
 
     let ageComoGoblin = (nomeCartaInimiga === 'Goblin') || (nomeCartaInimiga === 'Trio de Goblin' && vidaAtual <= 2);
@@ -2877,12 +3463,11 @@ function aplicarDanoInimigo(idPacoteAlvo) {
         return narrar("🐴 O Cavalo de Tróia inimigo não pode ser atacado! Escolha outra carta.");
     }
 
-    // 🦇 VAMPI7: só pode ser atacado quando estiver com 3 ou mais de vida.
+    // 🦇 A mesma exceção vale para o Vampi7 do inimigo: sozinho ele deixa de ser
+    // intangível mesmo abaixo de 3 de vida, evitando uma batalha impossível de encerrar.
     if (nomeAlvo.trim() === 'Vampi7') {
-        let idVidaVampi7 = idPacoteAlvo.replace("pacote-", "vida-");
-        let vidaVampi7 = parseFloat(document.getElementById(idVidaVampi7).innerText) || 0;
-        if (vidaVampi7 < 3) {
-            return narrar("🦇 O Vampi7 inimigo só pode ser atacado com 3 ou mais de vida! Escolha outra carta.");
+        if (vampi7EstaIntangivel(pacoteAlvo)) {
+            return narrar("🦇 O Vampi7 inimigo está intangível enquanto possui aliados! Escolha outra carta.");
         }
     }
 
@@ -2899,6 +3484,10 @@ function aplicarDanoInimigo(idPacoteAlvo) {
             delete cartasProtegidas[idPuro];
         }
     }
+
+    // 👻 Mesma regra no ataque do oponente: o toque do Ecto remove o escudo
+    // antes do cálculo, então o dano não é bloqueado.
+    aplicarToqueEctoAntesDoDano(idPuro);
 
     // 🛡️ BLOQUEIO DO GUERREIRO
     if (escudoGuerreiro[idPuro] && Number(danoInimigoPreparado) > 0) {
@@ -2920,7 +3509,9 @@ function aplicarDanoInimigo(idPacoteAlvo) {
     let textoVida = document.getElementById(idVida);
     // 🩹 CORREÇÃO: nunca deixa a vida mostrar número negativo — trava em 0.
     let vidaAtual = Math.max(0, parseFloat(textoVida.innerText) - danoInimigoPreparado);
+    let vidaAntesDoGolpe = parseFloat(textoVida.innerText);
     textoVida.innerText = vidaAtual;
+    sincronizarDanoDoTrio(idPuro, vidaAntesDoGolpe, vidaAtual);
 
     // 🪃 COLOQUE ESTE BLOCO AQUI: Ricochete do Bumerskeleton do Inimigo
     try {
@@ -2974,24 +3565,14 @@ function aplicarDanoInimigo(idPacoteAlvo) {
 
     // 🦇 VAMPI7 — ataca junto de qualquer carta do mesmo time que atacar.
     dispararVampi7JuntoDoAtaque(ultimoIdQueAtacou, idPacoteAlvo);
+    dispararSeteNegativoJuntoDoAtaque(ultimoIdQueAtacou, idPacoteAlvo);
     // 🛸 PORTABLE — ataca junto enquanto a bateria durar.
     dispararPortableJuntoDoAtaque(ultimoIdQueAtacou, idPacoteAlvo);
 
     modoAtaqueInimigo = false; 
     danoInimigoPreparado = 0;
 
-    if (idSeparadoAtivoDivididoInimigo) {
-        separadaoDividido[idSeparadoAtivoDivididoInimigo]--;
-        if (separadaoDividido[idSeparadoAtivoDivididoInimigo] > 0) {
-            narrar("👥 Falta a outra carta da dupla inimiga atacar ainda!");
-        } else {
-            animarReuniaoSeparado(idSeparadoAtivoDivididoInimigo);
-            delete separadaoDividido[idSeparadoAtivoDivididoInimigo];
-            passarTurno();
-        }
-    } else {
-        passarTurno();
-    }
+    passarTurno();
 
     if (typeof atualizarTodosUnidoes === "function") atualizarTodosUnidoes();
 }
@@ -3223,15 +3804,19 @@ function atualizarUnidoesNoCampo(campoHTML) {
     unidoes.forEach(pacote => {
         let idUnico = pacote.id.replace("pacote-", "");
         let spanDano = document.getElementById("dano-" + idUnico);
+        if (cartaSilenciadaPeloEcto(idUnico)) {
+            bonusUnidao[idUnico] = 0;
+            return;
+        }
         
         if (spanDano) {
             let danoAtual = parseFloat(spanDano.innerText) || 0;
             let bonusVariavelAnterior = bonusUnidao[idUnico] || 0;
             let danoProprioModificado = Math.max(0, danoAtual - bonusVariavelAnterior);
             let novoDano = danoProprioModificado + maiorDano;
-            spanDano.innerText = novoDano;
 
             if (novoDano !== danoAtual) {
+                spanDano.innerText = novoDano;
                 mostrarEfeitoAtaque(idUnico);
             }
             if (maiorDano !== bonusVariavelAnterior) {
@@ -3255,8 +3840,28 @@ function ehPacoteVampi7(pacote) {
     return obterNomeEfetivoCarta(idPuro, nomeEl.innerText.trim()) === "Vampi7";
 }
 
-// A névoa também serve como informação de jogo: abaixo de 3 de vida o Vampi7 está
-// intangível e não pode ser escolhido como alvo. Ao chegar em 3, ela desaparece.
+function vampi7EstaSozinho(pacote) {
+    if (!ehPacoteVampi7(pacote)) return false;
+    let campo = pacote.closest("#campo-j1, #campo-j2");
+    if (!campo) return false;
+    return !Array.from(campo.querySelectorAll(":scope > div[id^='pacote-']"))
+        .some(outraCarta => outraCarta !== pacote);
+}
+
+// Abaixo de 3 de vida, o Vampi7 fica intangível apenas se houver pelo menos outra
+// carta do time em campo. Sozinho, ele materializa para poder lutar e ser derrotado.
+function vampi7EstaIntangivel(pacote) {
+    if (!ehPacoteVampi7(pacote)) return false;
+
+    let idVampi = pacote.id.replace("pacote-", "");
+    let vidaEl = document.getElementById("vida-" + idVampi);
+    let vidaAtual = vidaEl ? (parseFloat(vidaEl.innerText) || 0) : 0;
+    return vidaAtual < 3 && !vampi7EstaSozinho(pacote);
+}
+window.vampi7EstaIntangivel = vampi7EstaIntangivel;
+
+// A névoa também serve como informação de jogo: ela só aparece enquanto a
+// intangibilidade realmente estiver protegendo o Vampi7.
 function sincronizarVisuaisVampi7() {
     document.querySelectorAll("#campo-j1 div[id^='pacote-'], #campo-j2 div[id^='pacote-']").forEach(pacote => {
         if (!ehPacoteVampi7(pacote)
@@ -3264,8 +3869,22 @@ function sincronizarVisuaisVampi7() {
             || pacote.classList.contains("vampi7-materializando")) return;
 
         let idVampi = pacote.id.replace("pacote-", "");
-        let vidaEl = document.getElementById("vida-" + idVampi);
-        let intangivel = vidaEl && (parseFloat(vidaEl.innerText) || 0) < 3;
+        let sozinho = vampi7EstaSozinho(pacote);
+        let danoEl = document.getElementById("dano-" + idVampi);
+
+        // O ponto de dano é um bônus condicional. Marcamos o estado antes de alterar
+        // o texto para o observador ao vivo nunca somar ou retirar duas vezes.
+        if (sozinho && !bonusVampi7Sozinho[idVampi]) {
+            bonusVampi7Sozinho[idVampi] = true;
+            if (danoEl) danoEl.innerText = (parseFloat(danoEl.innerText) || 0) + 1;
+            if (typeof mostrarEfeitoAtaque === "function") mostrarEfeitoAtaque(idVampi);
+        } else if (!sozinho && bonusVampi7Sozinho[idVampi]) {
+            delete bonusVampi7Sozinho[idVampi];
+            if (danoEl) danoEl.innerText = Math.max(0, (parseFloat(danoEl.innerText) || 0) - 1);
+            if (typeof mostrarEfeitoPerdaAtaque === "function") mostrarEfeitoPerdaAtaque(idVampi);
+        }
+
+        let intangivel = vampi7EstaIntangivel(pacote);
         let nevoaExistente = pacote.querySelector(":scope > .nevoa-intangivel-vampi7");
 
         pacote.classList.toggle("vampi7-intangivel", !!intangivel);
@@ -3280,6 +3899,13 @@ function sincronizarVisuaisVampi7() {
         } else if (!intangivel && nevoaExistente) {
             nevoaExistente.remove();
         }
+    });
+
+    // Remove somente registros órfãos. Uma transformação de Ctrl redefine os atributos
+    // da carta por conta própria, então aqui não mexemos no dano de quem deixou de ser Vampi7.
+    Object.keys(bonusVampi7Sozinho).forEach(idVampi => {
+        let pacote = document.getElementById("pacote-" + idVampi);
+        if (!pacote || !ehPacoteVampi7(pacote)) delete bonusVampi7Sozinho[idVampi];
     });
 }
 
@@ -3392,7 +4018,7 @@ function dispararVampi7JuntoDoAtaque(idAtacante, idPacoteAlvo) {
     let vampiros = Array.from(campoDoAtacante.getElementsByClassName(classeMesmoTime)).filter(pacote => {
         let nomeEl = pacote.querySelector(".nome-carta");
         let idP = pacote.id.replace("pacote-", "");
-        return nomeEl && obterNomeEfetivoCarta(idP, nomeEl.innerText.trim()) === "Vampi7" && pacote.id !== "pacote-" + idAtacante;
+        return nomeEl && obterNomeEfetivoCarta(idP, nomeEl.innerText.trim()) === "Vampi7" && pacote.id !== "pacote-" + idAtacante && !cartaSilenciadaPeloEcto(idP);
     });
     if (vampiros.length === 0) return;
 
@@ -3430,6 +4056,59 @@ function dispararVampi7JuntoDoAtaque(idAtacante, idPacoteAlvo) {
         }
 
         narrar(`🦇 Vampi7 atacou junto${(danoVampi > 0 && alvoAindaExiste) ? ` (${danoVampi} de dano no mesmo alvo)` : ""} e recuperou 1 de vida!`);
+    });
+}
+
+// ➖ 7 NEGATIVO — acompanha os ataques do time como o Vampi7. Ele começa com
+// dano 0, rouba até 1 de ataque do alvo a cada investida e, nos ataques
+// seguintes, usa normalmente todo o dano que já acumulou.
+function dispararSeteNegativoJuntoDoAtaque(idAtacante, idPacoteAlvo) {
+    let pacoteAtacante = document.getElementById("pacote-" + idAtacante);
+    let pacoteAlvo = document.getElementById(idPacoteAlvo);
+    if (!pacoteAtacante || !pacoteAlvo || typeof window.rpgRoubarDanoSeteNegativo !== "function") return;
+
+    let campo = pacoteAtacante.closest("#campo-j1") || pacoteAtacante.closest("#campo-j2");
+    if (!campo) return;
+    let setes = Array.from(campo.querySelectorAll(":scope > [data-inimigo-especial='sete-negativo']"))
+        .filter(pacote => {
+            let id = pacote.id.replace("pacote-", "");
+            return id !== idAtacante && !cartaSilenciadaPeloEcto(id);
+        });
+
+    if (setes.length === 0) return;
+
+    // Todos participam do mesmo ataque. Por isso cada 7 Negativo consulta o
+    // dano que o alvo possuía no começo da ação: o CTRL copiado não pode
+    // consumir o ponto e impedir o 7 Negativo original de também evoluir.
+    let idAlvo = String(idPacoteAlvo).replace("pacote-", "");
+    let txtDanoAlvo = document.getElementById("dano-" + idAlvo);
+    let danoAlvoNoInicio = txtDanoAlvo ? Math.max(0, parseFloat(txtDanoAlvo.innerText) || 0) : 0;
+    let ataquesAcumulados = setes.map(pacote => {
+        let idSete = pacote.id.replace("pacote-", "");
+        let txtDanoSete = document.getElementById("dano-" + idSete);
+        return {
+            pacote,
+            idSete,
+            dano: txtDanoSete ? Math.max(0, parseFloat(txtDanoSete.innerText) || 0) : 0
+        };
+    });
+
+    // Primeiro registra o roubo de todos. Assim todos recebem seu ponto mesmo
+    // se o dano acumulado de um deles destruir o alvo logo depois.
+    ataquesAcumulados.forEach((sete, indice) => {
+        if (!sete.pacote.isConnected) return;
+        window.rpgRoubarDanoSeteNegativo(
+            sete.idSete,
+            idPacoteAlvo,
+            indice === ataquesAcumulados.length - 1,
+            danoAlvoNoInicio
+        );
+    });
+
+    let ehAtaqueDoLadoInimigo = campo.id === "campo-j2";
+    ataquesAcumulados.forEach(sete => {
+        if (sete.dano <= 0 || !sete.pacote.isConnected || !document.getElementById(idPacoteAlvo)) return;
+        aplicarDanoAtaqueArea(idPacoteAlvo, sete.dano, ehAtaqueDoLadoInimigo);
     });
 }
 
@@ -3555,7 +4234,7 @@ function dispararPortableJuntoDoAtaque(idAtacante, idPacoteAlvo, retanguloAlvoSa
     let portables = Array.from(campoDoAtacante.getElementsByClassName(classeMesmoTime)).filter(pacote => {
         let nomeEl = pacote.querySelector(".nome-carta");
         let idP = pacote.id.replace("pacote-", "");
-        return nomeEl && obterNomeEfetivoCarta(idP, nomeEl.innerText.trim()) === "Portable" && pacote.id !== "pacote-" + idAtacante && portableDuracao[idP] > 0;
+        return nomeEl && obterNomeEfetivoCarta(idP, nomeEl.innerText.trim()) === "Portable" && pacote.id !== "pacote-" + idAtacante && portableDuracao[idP] > 0 && !cartaSilenciadaPeloEcto(idP);
     });
     if (portables.length === 0) return;
 
@@ -3578,9 +4257,91 @@ function dispararPortableJuntoDoAtaque(idAtacante, idPacoteAlvo, retanguloAlvoSa
 // 💀 CEMITÉRIO — registra uma carta morta (nome de exibição + lado) pra Reviverta poder
 // trazer ela de volta depois. Só entra no cemitério quem tem uma entrada correspondente no
 // bancoDeCartas (formas especiais sem carta própria, tipo Ícaro/Thiago do Criador, ficam de fora).
-function registrarMorte(nomeCarta, lado) {
+function registrarMorte(nomeCarta, lado, dadosEspeciais) {
     if (!nomeCarta || (lado !== "j1" && lado !== "j2")) return;
     let base = bancoDeCartas.find(c => c.nome === nomeCarta);
+    // As divisões do Slime não entram separadamente no cemitério. O modo inimigo
+    // chama esta opção somente quando a família inteira é derrotada.
+    if (!base && nomeCarta === "Slime" && dadosEspeciais && dadosEspeciais.familiaSlimeCompleta) {
+        cemiterio[lado].push({
+            id: "slime",
+            nome: "Slime",
+            img: "slime-provisorio.svg",
+            vida: 10,
+            dano: 1,
+            inimigoEspecial: "slime",
+            estagioSlime: 0
+        });
+        return;
+    }
+    if (!base && nomeCarta === "Zumbi") {
+        cemiterio[lado].push({
+            id: "zumbi",
+            nome: "Zumbi",
+            img: "zumbi-provisorio.svg",
+            vida: 4,
+            dano: 2,
+            inimigoEspecial: "zumbi"
+        });
+        return;
+    }
+    if (!base && nomeCarta === "Aicer") {
+        cemiterio[lado].push({
+            id: "aicer",
+            nome: "Aicer",
+            img: "aicer-provisorio.svg",
+            vida: 3,
+            dano: 1,
+            inimigoEspecial: "aicer"
+        });
+        return;
+    }
+    if (!base && nomeCarta === "Ecto") {
+        cemiterio[lado].push({
+            id: "ecto",
+            nome: "Ecto",
+            img: "ecto-provisorio.svg",
+            vida: 2,
+            dano: 3,
+            inimigoEspecial: "ecto"
+        });
+        return;
+    }
+    if (!base && (nomeCarta === "Fraguer" || nomeCarta === "Fraguer Fundido")) {
+        // A fusão volta ao cemitério como a carta-base; Reviverta sempre traz
+        // atributos originais, e não os quatro corpos já fundidos.
+        cemiterio[lado].push({
+            id: "fraguer",
+            nome: "Fraguer",
+            img: "fraguer-provisorio.svg",
+            vida: 4,
+            dano: 1,
+            inimigoEspecial: "fraguer"
+        });
+        return;
+    }
+    if (!base && nomeCarta === "Spiritista") {
+        cemiterio[lado].push({
+            id: "spiritista",
+            nome: "Spiritista",
+            img: "spiritista-provisorio.svg",
+            vida: 10,
+            dano: 1,
+            inimigoEspecial: "spiritista"
+        });
+        return;
+    }
+    if (!base && nomeCarta === "7 Negativo") {
+        cemiterio[lado].push({
+            id: "sete-negativo",
+            nome: "7 Negativo",
+            img: "sete-negativo-provisorio.svg",
+            vida: 5,
+            dano: 0,
+            inimigoEspecial: "sete-negativo"
+        });
+        return;
+    }
     if (!base) return;
     cemiterio[lado].push({ id: base.id, nome: base.nome, img: base.img, vida: base.vida, dano: base.dano });
 }
@@ -3589,6 +4350,17 @@ function registrarMorte(nomeCarta, lado) {
 // repetia essa lógica por conta própria; impacto e ricochete só removiam a carta, então o
 // Ork podia desaparecer sem criar os Goblins. Todo caminho de morte em campo chama isto.
 function ativarPassivasAoMorrer(nomeCarta, idUnico, campoDestino, mensagemOrk, mensagemBarril) {
+    // O pacote morto já foi removido; portanto somente Spiritistas que realmente
+    // continuam vivos na arena recebem o crescimento desta morte.
+    if (typeof window.rpgNotificarMorteAosSpiritistas === "function") {
+        window.rpgNotificarMorteAosSpiritistas(nomeCarta);
+    }
+    if (cartaSilenciadaPeloEcto(idUnico)) {
+        // O observador da família Slime precisa enxergar esta marca depois que
+        // o elemento sair do DOM para impedir o nascimento da fase seguinte.
+        if (nomeCarta !== "Slime") delete cartasSilenciadasEcto[idUnico];
+        return;
+    }
     if (nomeCarta === "Ork") {
         let qtd = (typeof orkBuffado !== "undefined" && orkBuffado[idUnico]) ? 3 : 2;
         narrar(mensagemOrk || `💀 PASSIVA: O Ork morreu e invocou ${qtd} Goblins!`);
@@ -3645,8 +4417,10 @@ function iniciarAtaqueIncendiario(idIncendiario, isInimigo) {
     if (botao) botao.style.display = "none"; // uso único pra começar o ciclo
 }
 
-// 🔥 INCENDIÁRIO — executa UMA fase do ciclo (1=joga pólvora, 2/3=queima 1 dano em cada
-// alvo marcado, 4=parado). Chamada tanto pelo botão "Jogar Pólvora" (fase 1)
+// 🔥 INCENDIÁRIO — executa UMA fase do ciclo (1=joga pólvora, 2/3=queima metade do
+// dano atual da carta em cada alvo marcado, 4=parado). Cada queimada consulta o
+// ataque exibido naquele momento, acompanhando buffs e reduções ao vivo.
+// Chamada tanto pelo botão "Jogar Pólvora" (fase 1)
 // quanto a cada passagem de turno (fases seguintes).
 function executarFaseIncendiario(idIncendiario, fase) {
     let pacoteInc = document.getElementById("pacote-" + idIncendiario);
@@ -3675,19 +4449,25 @@ function executarFaseIncendiario(idIncendiario, fase) {
     } else if (fase === 2 || fase === 3) {
         let alvos = incendiarioAlvos[idIncendiario] || [];
         let algumAtingido = false;
+        let elementoDanoIncendiario = document.getElementById("dano-" + idIncendiario);
+        let danoAtualIncendiario = elementoDanoIncendiario
+            ? parseFloat(elementoDanoIncendiario.innerText)
+            : 0;
+        if (!Number.isFinite(danoAtualIncendiario)) danoAtualIncendiario = 0;
+        let danoPorQueimada = Math.max(0, danoAtualIncendiario) / 2;
         incendiarioFasesVisuais[idIncendiario] = fase;
         sincronizarVisuaisIncendiario();
         alvos.forEach(idAlvo => {
             if (document.getElementById(idAlvo)) {
                 animarFogoIncendiario(idAlvo, fase === 2);
-                aplicarDanoDireto(idAlvo, 1, ladoInimigo === "j2");
+                aplicarDanoDireto(idAlvo, danoPorQueimada, ladoInimigo === "j2");
                 algumAtingido = true;
             }
         });
         if (algumAtingido) {
             narrar(fase === 2
-                ? `🔥 ${rotuloInc} acendeu a pólvora! 1 de dano em cada carta atingida.`
-                : `🔥 A pólvora do ${rotuloInc} continua queimando! Mais 1 de dano em cada carta atingida.`);
+                ? `🔥 ${rotuloInc} acendeu a pólvora! ${danoPorQueimada} de dano em cada carta atingida (metade do seu ataque atual).`
+                : `🔥 A pólvora do ${rotuloInc} continua queimando! Mais ${danoPorQueimada} de dano em cada carta atingida.`);
         }
     } else if (fase === 4) {
         incendiarioFasesVisuais[idIncendiario] = 4;
@@ -3812,10 +4592,10 @@ function animarEstilhacosCavaloTroia(pacoteCavalo, ladoInimigo) {
     setTimeout(() => eco.remove(), 1550);
 }
 
-// 🐴 Aplica dano do Cavalo de Tróia em TODAS as cartas de um lado — tanto no campo quanto
-// ainda na mão. Cartas no campo passam por aplicarDanoDireto (assim mantêm as passivas de
-// morte, tipo Ork/Barril); cartas na mão só perdem vida e somem se chegarem a 0, sem
-// acionar passivas de campo (nunca chegaram a entrar em batalha).
+// 🐴 Aplica dano do Cavalo de Tróia em TODAS as cartas de um lado — no campo, na mão e,
+// no modo Ondas, também na reserva que ainda nem apareceu. Cartas no campo passam por
+// aplicarDanoDireto (assim mantêm as passivas de morte, tipo Ork/Barril); cartas fora do
+// campo só perdem vida e somem se chegarem a 0, pois ainda não entraram em batalha.
 function aplicarDanoCavaloDeTroia(ladoInimigo, dano) {
     let campoInimigo = document.getElementById("campo-" + ladoInimigo);
     if (campoInimigo) {
@@ -3853,6 +4633,16 @@ function aplicarDanoCavaloDeTroia(ladoInimigo, dano) {
             }
         });
     }
+
+    let resultadoReserva = { atingidas: 0, eliminadas: 0 };
+    if (ladoInimigo === "j2" && typeof window.rpgModoInimigoAplicarDanoReserva === "function") {
+        resultadoReserva = window.rpgModoInimigoAplicarDanoReserva(dano) || resultadoReserva;
+    }
+
+    return {
+        reservaAtingida: resultadoReserva.atingidas || 0,
+        reservaEliminada: resultadoReserva.eliminadas || 0
+    };
 }
 
 function aplicarDanoDireto(idPacoteAlvo, dano, isInimigo) {
@@ -3866,8 +4656,10 @@ function aplicarDanoDireto(idPacoteAlvo, dano, isInimigo) {
     let nomeCheck = obterNomeEfetivoCarta(idPuro, nomeCheckExibido);
     if (nomeCheck === 'Cavalo de Tróia') return;
 
-    let vidaAtual = Math.max(0, parseFloat(txtVida.innerText) - dano);
+    let vidaAntesDoGolpe = parseFloat(txtVida.innerText);
+    let vidaAtual = Math.max(0, vidaAntesDoGolpe - dano);
     txtVida.innerText = vidaAtual;
+    sincronizarDanoDoTrio(idPuro, vidaAntesDoGolpe, vidaAtual);
 
     if (vidaAtual <= 0) {
         let pacote = document.getElementById(idPacoteAlvo);
@@ -3903,16 +4695,102 @@ function obterCartasAdjacentes(idPacoteAlvo) {
 
 // 🗡️ CAVALEIRO DAS TREVAS — aplica dano no alvo principal escolhido + seus vizinhos reais
 // no campo (usa obterCartasAdjacentes, o mesmo helper que o Barril já usa pra isso).
-// Sem Cavaleiro "despertado": 1 carta sozinha leva 2, alvo+vizinho(s) levam 3 cada (máx. 2 cartas).
-// Cavaleiro "despertado" (tirou 5 no dado): sempre 5 de dano no alvo + até 2 vizinhos (3 cartas).
+// Atualiza o número da própria carta conforme aquilo que ela causará agora:
+// 2 com um alvo, 3 com dois ou mais e 5 após despertar. Buffs externos são
+// preservados separadamente e continuam somados ao valor natural.
+function sincronizarDanoCavaleirosAoVivo() {
+    let idsPresentes = new Set();
+
+    document.querySelectorAll("#campo-j1 > div[id^='pacote-'], #campo-j2 > div[id^='pacote-']").forEach(pacote => {
+        let nomeEl = pacote.querySelector(".nome-carta");
+        if (!nomeEl || nomeEl.innerText.trim() !== "Cavaleiro das Trevas") return;
+
+        let idCavaleiro = pacote.id.replace("pacote-", "");
+        let danoEl = document.getElementById("dano-" + idCavaleiro);
+        if (!danoEl) return;
+        idsPresentes.add(idCavaleiro);
+
+        let ehAliado = pacote.closest("#campo-j1") !== null;
+        let campoAlvo = document.getElementById(ehAliado ? "campo-j2" : "campo-j1");
+        let quantidadeAlvos = campoAlvo
+            ? campoAlvo.querySelectorAll(":scope > div[id^='pacote-']").length
+            : 0;
+        let especialAtivo = typeof cavaleiroAtivado !== "undefined" && !!cavaleiroAtivado[idCavaleiro];
+        let danoNatural = especialAtivo ? 5 : (quantidadeAlvos >= 2 ? 3 : 2);
+        let danoAtual = parseFloat(danoEl.innerText);
+        if (!Number.isFinite(danoAtual)) danoAtual = danoNatural;
+
+        let estadoAnterior = danoCavaleirosAoVivo.get(idCavaleiro);
+        let bonusExterno;
+        if (!estadoAnterior) {
+            // Antes da primeira sincronização a carta ainda mostra seu dano base 2.
+            bonusExterno = danoAtual - (especialAtivo ? 5 : 2);
+        } else if (estadoAnterior.especialAtivo !== especialAtivo) {
+            // O especial escreve 5 diretamente na carta; esse salto é a nova forma
+            // natural, não um buff extra que deveria ser somado outra vez.
+            bonusExterno = danoAtual - danoNatural;
+        } else {
+            bonusExterno = estadoAnterior.bonusExterno;
+            // Qualquer alteração que não veio desta projeção é Besta, Auvex,
+            // Allsforms, Thiago ou outro modificador real de ataque.
+            if (danoAtual !== estadoAnterior.danoExibido) {
+                bonusExterno += danoAtual - estadoAnterior.danoExibido;
+            }
+        }
+
+        let danoExibido = Math.max(0, danoNatural + bonusExterno);
+        if (danoAtual !== danoExibido) danoEl.innerText = danoExibido;
+        danoCavaleirosAoVivo.set(idCavaleiro, {
+            bonusExterno,
+            danoExibido,
+            especialAtivo
+        });
+    });
+
+    Array.from(danoCavaleirosAoVivo.keys()).forEach(idCavaleiro => {
+        if (!idsPresentes.has(idCavaleiro)) danoCavaleirosAoVivo.delete(idCavaleiro);
+    });
+}
+
+// O cálculo do golpe usa exatamente o valor que está aparecendo na carta.
 function _calcularAtaqueCavaleiro(idCavaleiro, vizinhos) {
+    sincronizarDanoCavaleirosAoVivo();
+    let danoEl = document.getElementById("dano-" + idCavaleiro);
+    let danoAtual = danoEl ? parseFloat(danoEl.innerText) : 2;
+    if (!Number.isFinite(danoAtual)) danoAtual = 2;
+
     if (typeof cavaleiroAtivado !== 'undefined' && cavaleiroAtivado[idCavaleiro]) {
-        return { danoArea: 5, alvosMaximos: 3 };
+        return { danoArea: danoAtual, alvosMaximos: 3 };
     }
     if (vizinhos.length > 0) {
-        return { danoArea: 3, alvosMaximos: 2 };
+        return { danoArea: danoAtual, alvosMaximos: 2 };
     }
-    return { danoArea: 2, alvosMaximos: 1 };
+    return { danoArea: danoAtual, alvosMaximos: 1 };
+}
+
+// O Cavaleiro resolve o próprio ataque fora de receberAtaque/aplicarDanoInimigo.
+// Por isso a parceria do Separado precisa ser chamada explicitamente aqui.
+// O dano do Separado é lido no instante do golpe e somado no alvo principal.
+function _dispararSeparadoJuntoDoCavaleiro(idCavaleiro, idPacoteAlvo, danoCavaleiro, cavaleiroInimigo) {
+    if (obterSeparadaoDivididoAtivo(idCavaleiro)) return 0;
+
+    let idSeparado = encontrarSeparadoParceiroDe(idCavaleiro);
+    if (!idSeparado) return 0;
+
+    let pacoteSeparado = document.getElementById("pacote-" + idSeparado);
+    let pacoteCavaleiro = document.getElementById("pacote-" + idCavaleiro);
+    let pacoteAlvo = document.getElementById(idPacoteAlvo);
+    let danoSeparadoEl = document.getElementById("dano-" + idSeparado);
+    if (!pacoteSeparado || !pacoteCavaleiro || !pacoteAlvo || !danoSeparadoEl) return 0;
+
+    let danoSeparado = parseFloat(danoSeparadoEl.innerText) || 0;
+    let nomeSeparado = pacoteSeparado.querySelector(".nome-carta").innerText.trim();
+    let danoTotal = danoCavaleiro + danoSeparado;
+
+    animarAtaqueConjuntoSeparado(idSeparado, idCavaleiro, idPacoteAlvo);
+    aplicarDanoAtaqueArea(idPacoteAlvo, danoSeparado, cavaleiroInimigo);
+    narrar(`👥 ${nomeSeparado} atacou junto com o Cavaleiro das Trevas: +${danoSeparado} no alvo principal (${danoTotal} de dano no total)!`);
+    return danoSeparado;
 }
 
 function aplicarAlvoCavaleiro(idPacoteAlvo) {
@@ -3930,10 +4808,12 @@ function aplicarAlvoCavaleiro(idPacoteAlvo) {
     narrar(`⚔️ O Cavaleiro das Trevas focou ${alvos.length} inimigo(s) (alvo + vizinhos) causando ${danoArea} de dano em cada!`);
     animarAtaqueAreaCavaleiro(idCavaleiroAtivo, pacoteAlvo, alvos, especialAtivo);
     alvos.forEach(pacote => aplicarDanoAtaqueArea(pacote.id, danoArea, false));
+    _dispararSeparadoJuntoDoCavaleiro(idCavaleiroQueAtacou, idPacoteAlvo, danoArea, false);
 
     // O Cavaleiro usa um caminho próprio de ataque em área e antes não avisava os
     // acompanhantes. Agora Vampi7 ganha vida e Portable dispara uma única vez no alvo central.
     dispararVampi7JuntoDoAtaque(idCavaleiroQueAtacou, idPacoteAlvo);
+    dispararSeteNegativoJuntoDoAtaque(idCavaleiroQueAtacou, idPacoteAlvo);
     dispararPortableJuntoDoAtaque(idCavaleiroQueAtacou, idPacoteAlvo, retanguloAlvoOriginal);
 
     modoAlvoCavaleiro = false;
@@ -3957,8 +4837,10 @@ function aplicarAlvoCavaleiroInimigo(idPacoteAlvo) {
     narrar(`⚔️ O Cavaleiro das Trevas inimigo focou ${alvos.length} de suas cartas (alvo + vizinhos) causando ${danoArea} de dano em cada!`);
     animarAtaqueAreaCavaleiro(idCavaleiroAtivo, pacoteAlvo, alvos, especialAtivo);
     alvos.forEach(pacote => aplicarDanoAtaqueArea(pacote.id, danoArea, true));
+    _dispararSeparadoJuntoDoCavaleiro(idCavaleiroQueAtacou, idPacoteAlvo, danoArea, true);
 
     dispararVampi7JuntoDoAtaque(idCavaleiroQueAtacou, idPacoteAlvo);
+    dispararSeteNegativoJuntoDoAtaque(idCavaleiroQueAtacou, idPacoteAlvo);
     dispararPortableJuntoDoAtaque(idCavaleiroQueAtacou, idPacoteAlvo, retanguloAlvoOriginal);
 
     modoAlvoCavaleiroInimigo = false;
@@ -4087,6 +4969,12 @@ function aplicarTransformacaoIcaro(idPacoteAlvo) {
 
     animarPoderCriacaoIcaro(idIcaroAtivo, pacoteAlvo);
 
+    // A família Slime representa uma única carta em diferentes corpos. Ícaro
+    // apaga os irmãos e transforma o grupo inteiro em apenas uma carta nova.
+    let transformacaoFamiliaSlime = typeof window.rpgPrepararTransformacaoFamiliaSlime === "function"
+        ? window.rpgPrepararTransformacaoFamiliaSlime(idUnico)
+        : null;
+
     let cartaObj = { nome: novaCartaInfo.nome, idUnico: idUnico, img: novaCartaInfo.img, vida: vidaAtual, dano: danoAtual };
     let classeCss = ehAliado ? "carta-aliada" : "carta-inimiga";
     let funcaoJogar = ehAliado ? "jogarCarta" : "jogarCartaInimigo";
@@ -4106,11 +4994,18 @@ function aplicarTransformacaoIcaro(idPacoteAlvo) {
     // "Liga" a carta de verdade — ataque, habilidade, tudo já funcionando com a nova identidade.
     if (ehAliado) jogarCarta("pacote-" + idUnico);
     else jogarCartaInimigo("pacote-" + idUnico);
+    if (cartaSilenciadaPeloEcto(idUnico)) aplicarInterfaceSilencioEcto(idUnico);
+
+    if (transformacaoFamiliaSlime && typeof window.rpgConcluirTransformacaoFamiliaSlime === "function") {
+        window.rpgConcluirTransformacaoFamiliaSlime();
+    }
 
     // As funções acima podem reposicionar a carta; busca novamente o elemento definitivo.
     animarRevelacaoIcaro(document.getElementById("pacote-" + idUnico));
 
-    narrar(`🎨 ÍCARO transformou ${nomeAntigo} em ${novaCartaInfo.nome}! Vida (${vidaAtual}) e dano (${danoAtual}) continuam os mesmos — e agora ela tem a passiva e a Habilidade de ${novaCartaInfo.nome}.`);
+    narrar(transformacaoFamiliaSlime && transformacaoFamiliaSlime.quantidade > 1
+        ? `🎨 ÍCARO transformou a família Slime inteira (${transformacaoFamiliaSlime.quantidade} cartas) em uma única carta: ${novaCartaInfo.nome}! A nova carta manteve a vida (${vidaAtual}) e o dano (${danoAtual}) do Slime escolhido.`
+        : `🎨 ÍCARO transformou ${nomeAntigo} em ${novaCartaInfo.nome}! Vida (${vidaAtual}) e dano (${danoAtual}) continuam os mesmos — e agora ela tem a passiva e a Habilidade de ${novaCartaInfo.nome}.`);
 
     modoTransformacaoIcaro = false;
     idIcaroAtivo = null;
@@ -4211,7 +5106,14 @@ function aplicarParceriaSeparado(idPacoteAlvo) {
         return narrar("❌ Alvo inválido! A parceira precisa ser uma carta do MESMO time.");
     }
 
-    parceriaSeparado[idSeparadoParceriaAtivo] = idPuro;
+    let idSeparado = idSeparadoParceriaAtivo;
+    parceriaSeparado[idSeparado] = idPuro;
+    // Se esta carta já conquistou o Especial permanente, trocar de parceira não o apaga:
+    // a nova dupla já fica pronta para atacar alvos diferentes.
+    if (especialFixoSeparado[idSeparado] === true) {
+        separadaoDividido[idSeparado] = 2;
+        separadaoAtacantesNaSequencia[idSeparado] = [];
+    }
     let nomeParceira = pacoteClicado.querySelector(".nome-carta").innerText.trim();
     narrar(`👥 Parceria formada com ${nomeParceira}! A partir de agora, elas atacam juntas o mesmo alvo.`);
     sincronizarVinculosSeparado();
@@ -4220,15 +5122,99 @@ function aplicarParceriaSeparado(idPacoteAlvo) {
     idSeparadoParceriaAtivo = null;
 }
 
-// 👥 Descobre se o ataque que ACABOU de acontecer faz parte de uma sequência dividida do
-// Separado/Separadois (habilidade do dado 6) — seja porque quem atacou é o próprio Separado,
-// seja porque é a parceira dele. Retorna o ID do Separado dono da sequência, ou null.
+// 👥 Recarrega, no início de cada turno, os dois ataques do Especial permanente.
+// A contagem separada ainda é temporária (2 → 1 → 0), mas a conquista guardada em
+// especialFixoSeparado nunca é consumida quando a rodada termina.
+function prepararEspeciaisFixosSeparadoDoTurno() {
+    if (typeof especialFixoSeparado === "undefined" || typeof separadaoDividido === "undefined") return;
+
+    let ladoAtual = turnoAtivo === 1 ? "j1" : "j2";
+    let campoAtual = document.getElementById("campo-" + ladoAtual);
+    if (!campoAtual) return;
+
+    Object.keys(especialFixoSeparado).forEach(idSeparado => {
+        if (especialFixoSeparado[idSeparado] !== true) return;
+
+        let pacoteSeparado = document.getElementById("pacote-" + idSeparado);
+        if (!pacoteSeparado || pacoteSeparado.parentElement !== campoAtual) return;
+
+        // Limpa qualquer contagem incompleta antiga antes de preparar a nova rodada.
+        delete separadaoDividido[idSeparado];
+        delete separadaoAtacantesNaSequencia[idSeparado];
+
+        let idParceira = parceriaSeparado[idSeparado];
+        let pacoteParceira = idParceira ? document.getElementById("pacote-" + idParceira) : null;
+        if (!pacoteParceira || pacoteParceira.parentElement !== campoAtual) return;
+
+        separadaoDividido[idSeparado] = 2;
+        separadaoAtacantesNaSequencia[idSeparado] = [];
+
+        // O botão não precisa voltar: depois de conquistado, o efeito já é automático.
+        let botaoEspecial = pacoteSeparado.querySelector("button[onclick*='usarHabilidade']");
+        if (botaoEspecial) botaoEspecial.style.display = "none";
+    });
+}
+
+// Descobre se o ataque que ACABOU de acontecer faz parte da sequência dividida — seja
+// porque quem atacou é o próprio Separado, seja porque é a parceira dele.
 function obterSeparadaoDivididoAtivo(idAtacante) {
     if (typeof separadaoDividido === 'undefined') return null;
     if (separadaoDividido[idAtacante] > 0) return idAtacante;
     let idSeparadoParceiro = encontrarSeparadoParceiroDe(idAtacante);
     if (idSeparadoParceiro && separadaoDividido[idSeparadoParceiro] > 0) return idSeparadoParceiro;
     return null;
+}
+
+function obterSequenciaSeparadoPendenteDoLado(lado) {
+    if (typeof separadaoDividido === "undefined" || typeof separadaoAtacantesNaSequencia === "undefined") return null;
+
+    for (let idSeparado of Object.keys(separadaoDividido)) {
+        let atacantes = separadaoAtacantesNaSequencia[idSeparado] || [];
+        let pacoteSeparado = document.getElementById("pacote-" + idSeparado);
+        if (separadaoDividido[idSeparado] !== 1
+            || atacantes.length !== 1
+            || !pacoteSeparado?.closest("#campo-" + lado)) continue;
+
+        let primeiro = atacantes[0];
+        let idObrigatorio = primeiro === idSeparado ? parceriaSeparado[idSeparado] : idSeparado;
+        if (!idObrigatorio || !document.getElementById("pacote-" + idObrigatorio)) {
+            delete separadaoDividido[idSeparado];
+            delete separadaoAtacantesNaSequencia[idSeparado];
+            continue;
+        }
+        return {
+            idSeparado,
+            idObrigatorio
+        };
+    }
+    return null;
+}
+
+// Registra um ataque da dupla sem impor quem deve começar. Retorna "aguardando" quando
+// falta o outro integrante, "concluido" no segundo ataque e null fora dessa sequência.
+function finalizarAtaqueSeparadoDividido(idAtacante, ehInimigo) {
+    let idSeparado = obterSeparadaoDivididoAtivo(idAtacante);
+    if (!idSeparado) return null;
+
+    let atacantes = separadaoAtacantesNaSequencia[idSeparado] || [];
+    if (!atacantes.includes(idAtacante)) atacantes.push(idAtacante);
+    separadaoAtacantesNaSequencia[idSeparado] = atacantes;
+    separadaoDividido[idSeparado] = Math.max(0, 2 - atacantes.length);
+
+    if (separadaoDividido[idSeparado] > 0) {
+        let outroId = idAtacante === idSeparado ? parceriaSeparado[idSeparado] : idSeparado;
+        let outroPacote = document.getElementById("pacote-" + outroId);
+        let outroNome = outroPacote?.querySelector(".nome-carta")?.innerText?.trim() || "a outra carta da dupla";
+        narrar(ehInimigo
+            ? `👥 ${outroNome} ainda vai realizar o segundo ataque da dupla inimiga.`
+            : `👥 Primeiro ataque concluído! Agora ataque com ${outroNome} e escolha o outro alvo.`);
+        return "aguardando";
+    } else {
+        animarReuniaoSeparado(idSeparado);
+        delete separadaoDividido[idSeparado];
+        delete separadaoAtacantesNaSequencia[idSeparado];
+        return "concluido";
+    }
 }
 
 
@@ -4309,6 +5295,9 @@ function animarCartaPresaNoTempo(pacoteAlvo) {
 // único já gastas nas duas mesas (o botão "Especial" reaparece pra quem já usou), sem
 // mexer em vida, dano ou posição de nenhuma carta.
 function usarPassivaViajante(idUnico, botaoClicado) {
+    if (cartaSilenciadaPeloEcto(idUnico)) {
+        return narrar("👻 Este Viajante perdeu a Passiva para o Ecto e não pode voltar no tempo.");
+    }
     if (viajantesJaUsaram[idUnico]) {
         return narrar("⏳ Este Viajante do Tempo já usou a Passiva dele!");
     }
@@ -4319,16 +5308,100 @@ function usarPassivaViajante(idUnico, botaoClicado) {
     animarVoltaNoTempo(idUnico);
 
     let campo = document.getElementById("campo-" + lado);
+    let necromantesReativados = 0;
     if (campo) {
+        // Jogar Pólvora não é apenas um botão: existe um ciclo interno que
+        // continuava marcado como ativo mesmo após o tempo voltar. Limpamos o
+        // ciclo e seus alvos antigos para o próximo clique começar novamente
+        // pela fase 1 e marcar as cartas que estiverem na arena naquele momento.
+        Array.from(campo.querySelectorAll(".btn-polvora-incendiario")).forEach(btnPolvora => {
+            let pacoteIncendiario = btnPolvora.closest("div[id^='pacote-']");
+            if (!pacoteIncendiario) return;
+            let idIncendiario = pacoteIncendiario.id.replace("pacote-", "");
+            delete incendiarioCiclo[idIncendiario];
+            delete incendiarioAlvos[idIncendiario];
+            delete incendiarioFasesVisuais[idIncendiario];
+        });
+        sincronizarVisuaisIncendiario();
+
         Array.from(campo.querySelectorAll("button")).forEach(btn => {
             if (btn.style.display === "none") btn.style.display = "";
+        });
+
+        // O Ladrão volta a ter uma tentativa de roubo no turno em que o tempo
+        // retornou. Se já houver um roubo aguardando alvo, a própria função do
+        // Ladrão continua impedindo que outro seja iniciado ao mesmo tempo.
+        ladraoUsosPorLado[lado] = 0;
+        if (typeof window.rpgBotReativarPassivasAposViagem === "function") {
+            window.rpgBotReativarPassivasAposViagem(lado);
+        }
+
+        // Restaura também os estados internos das Passivas. Algumas são
+        // automáticas, outras dependem do próximo ataque e outras perderam o
+        // próprio botão durante uma transformação do Ctrl.
+        Array.from(campo.querySelectorAll(":scope > div[id^='pacote-']")).forEach(pacote => {
+            let idCarta = pacote.id.replace("pacote-", "");
+            // O toque do Ecto é permanente: nem a viagem no tempo devolve a
+            // Passiva ou o Especial removido daquela identidade.
+            if (cartaSilenciadaPeloEcto(idCarta)) {
+                aplicarInterfaceSilencioEcto(idCarta);
+                return;
+            }
+            let nomeExibido = pacote.querySelector(".nome-carta")?.innerText.trim() || "";
+            let nomeEfetivo = obterNomeEfetivoCarta(idCarta, nomeExibido);
+
+            // Goblin e o último integrante do Trio poderão rolar novamente a
+            // Passiva no próximo ataque liberado pela viagem no tempo.
+            delete goblinJaAtacouNesteTurno[idCarta];
+            delete goblinAtaquesGanhos[idCarta];
+
+            if (nomeEfetivo === "Portable") {
+                portableDuracao[idCarta] = 4;
+            }
+            if (nomeEfetivo.includes("Barril de Goblin")) {
+                delete barrilJaImpactou[idCarta];
+            }
+
+            // Depois de copiar, o Ctrl troca todo o bloco de ações e o botão
+            // Passiva desaparece. A viagem recria esse botão para permitir uma
+            // nova cópia da última carta usada pelo adversário.
+            if ((nomeExibido === "Ctrl C" || nomeExibido === "Ctrl V")
+                && !pacote.querySelector("button[onclick*='usarPassivaCtrlC']")) {
+                let acoesCtrl = pacote.querySelector("div[id^='acoes-']");
+                if (acoesCtrl) {
+                    acoesCtrl.insertAdjacentHTML(
+                        "beforeend",
+                        `<button onclick="usarPassivaCtrlC('${idCarta}', this)" style="background-color: #34495e; color: white; font-weight: bold; width: 100%; margin-bottom: 2px; cursor: pointer;">Passiva 📋</button>`
+                    );
+                }
+            }
+
+            // A Passiva do Necromante não tem botão: ela precisa ser executada
+            // novamente. Isso também alcança Ctrl C/V copiando Necromante.
+            if (nomeEfetivo !== "Necromante" || typeof verificarPassivaNecromante !== "function") return;
+
+            verificarPassivaNecromante({ nome: "Necromante", passivaAtivada: false }, lado === "j1");
+            necromantesReativados++;
         });
     }
 
     viajantesJaUsaram[idUnico] = true;
     if (botaoClicado) botaoClicado.style.display = "none"; // essa própria Passiva é uso único
 
-    narrar(`⏳ O tempo voltou! Todas as Habilidades e Especiais já usados no time ${lado === "j1" ? "aliado" : "do oponente"} estão disponíveis de novo (vida e dano de ninguém mudaram).`);
+    // Uma viagem não restaura outra viagem já gasta: isso impediria dois
+    // Viajantes de devolverem a Passiva um do outro para sempre.
+    if (campo) {
+        Array.from(campo.querySelectorAll("button[onclick*='usarPassivaViajante']")).forEach(btnViajar => {
+            let pacote = btnViajar.closest("div[id^='pacote-']");
+            let idDono = pacote ? pacote.id.replace("pacote-", "") : "";
+            if (viajantesJaUsaram[idDono]) btnViajar.style.display = "none";
+        });
+    }
+
+    let mensagemNecromante = necromantesReativados > 0
+        ? ` A Passiva ${necromantesReativados === 1 ? "do Necromante foi reativada e invocou 2 novas cartas" : `dos ${necromantesReativados} Necromantes foi reativada e invocou ${necromantesReativados * 2} novas cartas`}.`
+        : "";
+    narrar(`⏳ O tempo voltou! Todas as Habilidades, Passivas e Especiais já usados no time ${lado === "j1" ? "aliado" : "do oponente"} estão disponíveis de novo (vida e dano de ninguém mudaram).${mensagemNecromante}`);
     if (typeof atualizarTodosUnidoes === "function") atualizarTodosUnidoes();
 }
 
@@ -4348,10 +5421,22 @@ function aplicarPrenderNoTempo(idPacoteAlvo) {
     let idPuro = idPacoteAlvo.replace("pacote-", "");
     let nomeAlvo = pacoteClicado.querySelector(".nome-carta").innerText.trim();
 
-    animarCartaPresaNoTempo(pacoteClicado);
-    pacoteClicado.remove(); // ela desaparece da batalha — presa em outro momento do tempo
+    let idsFamiliaSlime = typeof window.rpgObterIdsFamiliaSlime === "function"
+        ? window.rpgObterIdsFamiliaSlime(idPuro)
+        : [];
 
-    narrar(`⏳ ${nomeAlvo} ficou PRESA em um momento do tempo e SUMIU da batalha!`);
+    if (idsFamiliaSlime.length > 0 && typeof window.rpgApagarFamiliaSlime === "function") {
+        idsFamiliaSlime.forEach(idSlime => {
+            let pacoteSlime = document.getElementById("pacote-" + idSlime);
+            if (pacoteSlime) animarCartaPresaNoTempo(pacoteSlime);
+        });
+        let totalApagado = window.rpgApagarFamiliaSlime(idPuro);
+        narrar(`⏳ A linha temporal da família Slime foi apagada: ${totalApagado} ${totalApagado === 1 ? "carta sumiu" : "cartas sumiram"} sem gerar novas divisões!`);
+    } else {
+        animarCartaPresaNoTempo(pacoteClicado);
+        pacoteClicado.remove(); // ela desaparece da batalha — presa em outro momento do tempo
+        narrar(`⏳ ${nomeAlvo} ficou PRESA em um momento do tempo e SUMIU da batalha!`);
+    }
 
     modoPrenderNoTempo = false;
     idPrenderNoTempoAtivo = null;
@@ -4415,6 +5500,7 @@ function aplicarAlvoBarril(idPacoteAlvo, viaEspecial) {
 
         // 🦇 VAMPI7 — esse impacto conta como um ataque de verdade também.
         dispararVampi7JuntoDoAtaque(idBarrilPuro, idPacoteAlvo);
+        dispararSeteNegativoJuntoDoAtaque(idBarrilPuro, idPacoteAlvo);
         // 🛸 PORTABLE — ataca junto enquanto a bateria durar.
         dispararPortableJuntoDoAtaque(idBarrilPuro, idPacoteAlvo);
     }
@@ -4956,6 +6042,34 @@ function reviverCartaDoCemiterio(lado, index, idItem, ehAliado) {
     revivertaPendente = null;
 
     let pacoteRevivido = document.getElementById("pacote-" + idUnico);
+    if (pacoteRevivido && dadosCarta.inimigoEspecial === "slime"
+        && typeof window.rpgRegistrarSlimeRevivido === "function") {
+        window.rpgRegistrarSlimeRevivido(idUnico, ehAliado);
+    }
+    if (pacoteRevivido && dadosCarta.inimigoEspecial === "zumbi"
+        && typeof window.rpgRegistrarZumbi === "function") {
+        window.rpgRegistrarZumbi(idUnico, ehAliado);
+    }
+    if (pacoteRevivido && dadosCarta.inimigoEspecial === "aicer"
+        && typeof window.rpgRegistrarAicer === "function") {
+        window.rpgRegistrarAicer(idUnico, ehAliado);
+    }
+    if (pacoteRevivido && dadosCarta.inimigoEspecial === "ecto"
+        && typeof window.rpgRegistrarEcto === "function") {
+        window.rpgRegistrarEcto(idUnico, ehAliado);
+    }
+    if (pacoteRevivido && dadosCarta.inimigoEspecial === "fraguer"
+        && typeof window.rpgRegistrarFraguer === "function") {
+        window.rpgRegistrarFraguer(idUnico, ehAliado, false);
+    }
+    if (pacoteRevivido && dadosCarta.inimigoEspecial === "spiritista"
+        && typeof window.rpgRegistrarSpiritista === "function") {
+        window.rpgRegistrarSpiritista(idUnico, ehAliado);
+    }
+    if (pacoteRevivido && dadosCarta.inimigoEspecial === "sete-negativo"
+        && typeof window.rpgRegistrarSeteNegativo === "function") {
+        window.rpgRegistrarSeteNegativo(idUnico, ehAliado);
+    }
     if (pacoteRevivido) requestAnimationFrame(() => animarChegadaReviverta(pacoteRevivido));
 
     narrar(`✨ Reviverta! [${dadosCarta.nome}] voltou dos mortos com os atributos originais (❤️${dadosCarta.vida} ⚔️${dadosCarta.dano}) e foi para a mão ${ehAliado ? "aliada" : "do oponente"}.`);
@@ -5123,11 +6237,101 @@ function animarTeleporteCracker(dadosOrigem, pacoteRoubado) {
     }, 1050);
 }
 
+// Quando o Cracker escolhe um Slime, captura todos os integrantes ainda vivos
+// daquela família. Eles preservam vida, dano e estágio atuais e continuam ligados:
+// a próxima divisão só nasce depois que todos os sobreviventes capturados morrerem.
+function roubarFamiliaSlimeCracker(idPacoteDomOriginal, idItem, ehAliado) {
+    let idPuroEscolhido = idPacoteDomOriginal.replace("pacote-", "");
+    if (typeof window.rpgPrepararRouboFamiliaSlime !== "function") return false;
+
+    let transferencia = window.rpgPrepararRouboFamiliaSlime(idPuroEscolhido);
+    if (!transferencia || !transferencia.membros || transferencia.membros.length === 0) return false;
+
+    let membros = transferencia.membros.map(idAntigo => {
+        let pacote = document.getElementById("pacote-" + idAntigo);
+        if (!pacote) return null;
+        let nomeEl = pacote.querySelector(".nome-carta");
+        let imgEl = pacote.querySelector("img");
+        let vidaEl = document.getElementById("vida-" + idAntigo);
+        let danoEl = document.getElementById("dano-" + idAntigo);
+        return {
+            idAntigo,
+            pacote,
+            nome: nomeEl ? nomeEl.innerText.trim() : "Slime",
+            img: imgEl ? imgEl.getAttribute("src") : "slime-provisorio.svg",
+            vida: vidaEl ? vidaEl.innerText : "1",
+            dano: danoEl ? danoEl.innerText : "1",
+            animacao: prepararInfeccaoCracker(pacote)
+        };
+    }).filter(Boolean);
+
+    if (membros.length === 0) return false;
+
+    membros.forEach(membro => membro.pacote.remove());
+
+    let idMaoHTML = ehAliado ? "mao-j1" : "mao-j2";
+    let funcaoJogar = ehAliado ? "jogarCarta" : "jogarCartaInimigo";
+    let classeCss = ehAliado ? "carta-aliada" : "carta-inimiga-espera";
+    let divMao = document.getElementById(idMaoHTML);
+    let novosIds = [];
+
+    membros.forEach((membro, indice) => {
+        let idUnico = "slime-roubado-" + Date.now() + "-" + indice + "-" + Math.floor(Math.random() * 10000);
+        let novaCarta = {
+            id: "slime",
+            idUnico,
+            nome: membro.nome,
+            img: membro.img,
+            vida: membro.vida,
+            dano: membro.dano
+        };
+        if (divMao) divMao.insertAdjacentHTML("beforeend", criarHTMLCarta(novaCarta, funcaoJogar, classeCss, ehAliado));
+        let pacoteRoubado = document.getElementById("pacote-" + idUnico);
+        if (pacoteRoubado) {
+            pacoteRoubado.classList.add("cracker-destino-oculto");
+            novosIds.push(idUnico);
+            requestAnimationFrame(() => animarTeleporteCracker(membro.animacao, pacoteRoubado));
+        }
+    });
+
+    if (typeof window.rpgRegistrarFamiliaSlimeRoubada === "function") {
+        window.rpgRegistrarFamiliaSlimeRoubada(novosIds, ehAliado, transferencia.estagio);
+    }
+
+    let pacoteItem = document.getElementById("pacote-" + idItem);
+    if (pacoteItem) pacoteItem.remove();
+    let overlay = document.getElementById("overlay-cracker");
+    if (overlay) overlay.remove();
+    crackerPendente = null;
+
+    narrar(`🦠 Cracker capturou a família Slime inteira! ${novosIds.length} ${novosIds.length === 1 ? "integrante foi roubado" : "integrantes foram roubados"} e mantiveram o estágio atual.`);
+    return true;
+}
+
 function roubarCartaCracker(idPacoteDomOriginal, origem, idItem, ehAliado) {
     let pacoteOriginal = document.getElementById(idPacoteDomOriginal);
     if (!pacoteOriginal) return;
 
+    if (pacoteOriginal.dataset.inimigoEspecial === "slime"
+        && roubarFamiliaSlimeCracker(idPacoteDomOriginal, idItem, ehAliado)) {
+        return;
+    }
+
     let idPuro = idPacoteDomOriginal.replace("pacote-", "");
+    // As cartas inimigas especiais precisam levar sua passiva junto com o
+    // roubo. O Slime usa o fluxo de família acima; aqui preservamos os dados
+    // necessários para religar o Esqueleto depois que o Cracker trocar seu ID.
+    let familiaEsqueletoRoubado = pacoteOriginal.dataset.inimigoEspecial === "esqueleto"
+        ? pacoteOriginal.dataset.esqueletoFamilia
+        : null;
+    let roubouZumbi = pacoteOriginal.dataset.inimigoEspecial === "zumbi";
+    let roubouAicer = pacoteOriginal.dataset.inimigoEspecial === "aicer";
+    let roubouEcto = pacoteOriginal.dataset.inimigoEspecial === "ecto";
+    let roubouFraguer = pacoteOriginal.dataset.inimigoEspecial === "fraguer";
+    let roubouFraguerFundido = pacoteOriginal.dataset.inimigoEspecial === "fraguer-fundido";
+    let roubouSpiritista = pacoteOriginal.dataset.inimigoEspecial === "spiritista";
+    let roubouSeteNegativo = pacoteOriginal.dataset.inimigoEspecial === "sete-negativo";
+    let idOriginalEsqueleto = pacoteOriginal.dataset.esqueletoId || idPuro;
     let nomeCarta = pacoteOriginal.querySelector(".nome-carta").innerText.trim();
     let vidaAtual = document.getElementById("vida-" + idPuro) ? document.getElementById("vida-" + idPuro).innerText : "0";
     let danoAtual = document.getElementById("dano-" + idPuro) ? document.getElementById("dano-" + idPuro).innerText : "0";
@@ -5136,9 +6340,23 @@ function roubarCartaCracker(idPacoteDomOriginal, origem, idItem, ehAliado) {
     let base = bancoDeCartas.find(c => c.nome === nomeCarta);
 
     let dadosNovaCarta;
-    if (origem === "campo" && base) {
+    if (origem === "campo" && (base || roubouZumbi || roubouAicer || roubouEcto || roubouFraguer || roubouFraguerFundido || roubouSpiritista || roubouSeteNegativo)) {
         // 🃏 Roubada do CAMPO — reseta pros atributos originais de fábrica.
-        dadosNovaCarta = { id: base.id, nome: base.nome, img: base.img, vida: base.vida, dano: base.dano };
+        dadosNovaCarta = roubouZumbi
+            ? { id: "zumbi", nome: "Zumbi", img: "zumbi-provisorio.svg", vida: 4, dano: 2 }
+            : roubouAicer
+                ? { id: "aicer", nome: "Aicer", img: "aicer-provisorio.svg", vida: 3, dano: 1 }
+                : roubouEcto
+                    ? { id: "ecto", nome: "Ecto", img: "ecto-provisorio.svg", vida: 2, dano: 3 }
+                    : roubouFraguer
+                        ? { id: "fraguer", nome: "Fraguer", img: "fraguer-provisorio.svg", vida: 4, dano: 1 }
+                        : roubouFraguerFundido
+                            ? { id: "fraguer-fundido", nome: "Fraguer Fundido", img: "fraguer-fundido-provisorio.svg", vida: 2, dano: 8 }
+                            : roubouSpiritista
+                                ? { id: "spiritista", nome: "Spiritista", img: "spiritista-provisorio.svg", vida: 10, dano: 1 }
+                                : roubouSeteNegativo
+                                    ? { id: "sete-negativo", nome: "7 Negativo", img: "sete-negativo-provisorio.svg", vida: 5, dano: 0 }
+                                    : { id: base.id, nome: base.nome, img: base.img, vida: base.vida, dano: base.dano };
     } else {
         // ✋ Roubada da MÃO — mantém como estava.
         dadosNovaCarta = { id: base ? base.id : idPuro, nome: nomeCarta, img: imgAtual, vida: vidaAtual, dano: danoAtual };
@@ -5161,6 +6379,35 @@ function roubarCartaCracker(idPacoteDomOriginal, origem, idItem, ehAliado) {
 
     let pacoteRoubado = document.getElementById("pacote-" + idUnico);
     if (pacoteRoubado) pacoteRoubado.classList.add("cracker-destino-oculto");
+
+    if (pacoteRoubado && familiaEsqueletoRoubado !== null
+        && typeof window.rpgRestaurarEsqueletoRoubado === "function") {
+        window.rpgRestaurarEsqueletoRoubado(
+            idUnico,
+            ehAliado,
+            familiaEsqueletoRoubado,
+            idOriginalEsqueleto
+        );
+    }
+    if (pacoteRoubado && roubouZumbi && typeof window.rpgRegistrarZumbi === "function") {
+        window.rpgRegistrarZumbi(idUnico, ehAliado);
+    }
+    if (pacoteRoubado && roubouAicer && typeof window.rpgRegistrarAicer === "function") {
+        window.rpgRegistrarAicer(idUnico, ehAliado);
+    }
+    if (pacoteRoubado && roubouEcto && typeof window.rpgRegistrarEcto === "function") {
+        window.rpgRegistrarEcto(idUnico, ehAliado);
+    }
+    if (pacoteRoubado && (roubouFraguer || roubouFraguerFundido)
+        && typeof window.rpgRegistrarFraguer === "function") {
+        window.rpgRegistrarFraguer(idUnico, ehAliado, roubouFraguerFundido);
+    }
+    if (pacoteRoubado && roubouSpiritista && typeof window.rpgRegistrarSpiritista === "function") {
+        window.rpgRegistrarSpiritista(idUnico, ehAliado);
+    }
+    if (pacoteRoubado && roubouSeteNegativo && typeof window.rpgRegistrarSeteNegativo === "function") {
+        window.rpgRegistrarSeteNegativo(idUnico, ehAliado);
+    }
 
     let pacoteItem = document.getElementById("pacote-" + idItem);
     if (pacoteItem) pacoteItem.remove();
@@ -5424,7 +6671,15 @@ function copiarCartaDupliquetion(idPacoteOriginal, idItem, ehAliado) {
     let imgAtual = pacoteOriginal.querySelector("img") ? pacoteOriginal.querySelector("img").getAttribute("src") : "";
 
     let base = bancoDeCartas.find(c => c.nome === nomeCarta);
-    let idBase = base ? base.id : idPuro;
+    let idBase = base ? base.id
+        : pacoteOriginal.dataset.inimigoEspecial === "zumbi" ? "zumbi"
+            : pacoteOriginal.dataset.inimigoEspecial === "aicer" ? "aicer"
+                : pacoteOriginal.dataset.inimigoEspecial === "ecto" ? "ecto"
+                    : pacoteOriginal.dataset.inimigoEspecial === "fraguer" ? "fraguer"
+                        : pacoteOriginal.dataset.inimigoEspecial === "fraguer-fundido" ? "fraguer-fundido"
+                            : pacoteOriginal.dataset.inimigoEspecial === "spiritista" ? "spiritista"
+                                : pacoteOriginal.dataset.inimigoEspecial === "sete-negativo" ? "sete-negativo"
+                                    : idPuro;
 
     let vidaCopia = vidaAtual / 2;
     let danoCopia = danoAtual / 2;
@@ -5442,6 +6697,36 @@ function copiarCartaDupliquetion(idPacoteOriginal, idItem, ehAliado) {
     if (divMao) divMao.insertAdjacentHTML('beforeend', htmlDaCarta);
 
     let pacoteCopia = document.getElementById("pacote-" + idUnico);
+    let copiouSlime = pacoteOriginal.dataset.inimigoEspecial === "slime";
+    if (pacoteCopia && copiouSlime && typeof window.rpgRegistrarCopiaSlime === "function") {
+        window.rpgRegistrarCopiaSlime(idUnico, ehAliado, idPuro);
+    }
+    let copiouZumbi = pacoteOriginal.dataset.inimigoEspecial === "zumbi";
+    if (pacoteCopia && copiouZumbi && typeof window.rpgRegistrarZumbi === "function") {
+        window.rpgRegistrarZumbi(idUnico, ehAliado);
+    }
+    let copiouAicer = pacoteOriginal.dataset.inimigoEspecial === "aicer";
+    if (pacoteCopia && copiouAicer && typeof window.rpgRegistrarAicer === "function") {
+        window.rpgRegistrarAicer(idUnico, ehAliado);
+    }
+    let copiouEcto = pacoteOriginal.dataset.inimigoEspecial === "ecto";
+    if (pacoteCopia && copiouEcto && typeof window.rpgRegistrarEcto === "function") {
+        window.rpgRegistrarEcto(idUnico, ehAliado);
+    }
+    let copiouFraguer = pacoteOriginal.dataset.inimigoEspecial === "fraguer";
+    let copiouFraguerFundido = pacoteOriginal.dataset.inimigoEspecial === "fraguer-fundido";
+    if (pacoteCopia && (copiouFraguer || copiouFraguerFundido)
+        && typeof window.rpgRegistrarFraguer === "function") {
+        window.rpgRegistrarFraguer(idUnico, ehAliado, copiouFraguerFundido);
+    }
+    let copiouSpiritista = pacoteOriginal.dataset.inimigoEspecial === "spiritista";
+    if (pacoteCopia && copiouSpiritista && typeof window.rpgRegistrarSpiritista === "function") {
+        window.rpgRegistrarSpiritista(idUnico, ehAliado);
+    }
+    let copiouSeteNegativo = pacoteOriginal.dataset.inimigoEspecial === "sete-negativo";
+    if (pacoteCopia && copiouSeteNegativo && typeof window.rpgRegistrarSeteNegativo === "function") {
+        window.rpgRegistrarSeteNegativo(idUnico, ehAliado);
+    }
     if (pacoteCopia) pacoteCopia.classList.add("dupliquetion-destino-oculto");
 
     let pacoteItem = document.getElementById("pacote-" + idItem);
@@ -5454,7 +6739,9 @@ function copiarCartaDupliquetion(idPacoteOriginal, idItem, ehAliado) {
     if (pacoteCopia) requestAnimationFrame(() => animarCopiaDupliquetion(dadosAnimacaoDupliquetion, pacoteCopia));
     else if (dadosAnimacaoDupliquetion && dadosAnimacaoDupliquetion.eco) dadosAnimacaoDupliquetion.eco.remove();
 
-    narrar(`🪞 Dupliquetion! Uma cópia de [${nomeCarta}] nasceu com metade da vida e do dano (❤️${vidaCopia} ⚔️${danoCopia}) na mão ${ehAliado ? "aliada" : "do oponente"}!`);
+    narrar(copiouSlime
+        ? `🪞 Dupliquetion! O Slime foi clonado com metade dos atributos (❤️${vidaCopia} ⚔️${danoCopia}) e a cópia iniciou uma família independente na mão ${ehAliado ? "aliada" : "do oponente"}!`
+        : `🪞 Dupliquetion! Uma cópia de [${nomeCarta}] nasceu com metade da vida e do dano (❤️${vidaCopia} ⚔️${danoCopia}) na mão ${ehAliado ? "aliada" : "do oponente"}!`);
 }
 function executarTraicao(idAlvoPacote) {
     let pacoteTraidor = document.getElementById("pacote-" + idTraidor);
@@ -5751,6 +7038,7 @@ function concluirImpactoBarrilBarbaro(idPacoteAlvo, idBarrilQueAtacou, ehBarrilA
 
     // 🦇 VAMPI7 — o impacto do Barril de Bárbaro também conta como um ataque de verdade.
     dispararVampi7JuntoDoAtaque(idBarrilQueAtacou, idPacoteAlvo);
+    dispararSeteNegativoJuntoDoAtaque(idBarrilQueAtacou, idPacoteAlvo);
     // 🛸 PORTABLE — ataca junto enquanto a bateria durar.
     dispararPortableJuntoDoAtaque(idBarrilQueAtacou, idPacoteAlvo);
 
@@ -5827,6 +7115,7 @@ function aplicarEspecialBumerskeletonAntesDeAtacar(idPacoteAlvo) {
 
     // 🦇 VAMPI7 — o golpe inicial do bumerangue também conta como um ataque de verdade.
     dispararVampi7JuntoDoAtaque(idBume, idPacoteAlvo);
+    dispararSeteNegativoJuntoDoAtaque(idBume, idPacoteAlvo);
     // 🛸 PORTABLE — ataca junto enquanto a bateria durar.
     dispararPortableJuntoDoAtaque(idBume, idPacoteAlvo);
 
@@ -5881,6 +7170,7 @@ function executarChainBumerangue(idBumerskeleton, idPrimeiroAlvo, campoAlvoId, a
                     // 🩹 CORREÇÃO: nunca deixa a vida mostrar número negativo — trava em 0.
                     let novaVida = Math.max(0, vidaAtual - danoDestaBatida);
                     txtVida.innerText = novaVida;
+                    sincronizarDanoDoTrio(idOutroAlvo, vidaAtual, novaVida);
                     
                     alvosDoBumerangue[idBumerskeleton].push(idOutroAlvo);
 
@@ -6270,6 +7560,7 @@ window.onload = function() {
     sincronizarVisuaisProtecaoBarril();
     sincronizarVinculosSeparado();
     sincronizarVisuaisVampi7();
+    sincronizarAtributosAoVivo();
 
     window.addEventListener("resize", sincronizarVisuaisProtecaoBarril);
     window.addEventListener("resize", sincronizarVinculosSeparado);
@@ -6288,6 +7579,14 @@ window.onload = function() {
         sincronizarVisuaisVampi7();
     }).observe(document.body, {
         childList: true,
+        subtree: true
+    });
+
+    // Vida e ataque são a fonte real do combate. O observador agenda apenas uma
+    // atualização por quadro, mesmo quando uma habilidade altera várias cartas.
+    new MutationObserver(agendarSincronizacaoAtributosAoVivo).observe(document.body, {
+        childList: true,
+        characterData: true,
         subtree: true
     });
 };

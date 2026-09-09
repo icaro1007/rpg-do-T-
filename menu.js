@@ -11,6 +11,9 @@ const RPG_LIMITE_PONTOS = 2026;
 const RPG_LIMITE_BAUS_DIA = 4;
 const RPG_CARTAS_INICIAIS = ["guerreiro", "barbaro", "mago", "escudo_item"];
 const RPG_COPIAS_EXTRAS_PARA_TROCA = 3;
+// Temporário para os testes: todas as cartas entram no sorteio de qualquer
+// modo de batalha. A coleção, os pontos e os desbloqueios salvos não são alterados.
+const RPG_TESTE_TODAS_CARTAS_NAS_BATALHAS = true;
 
 // Valores provisórios: ficam centralizados aqui para serem balanceados depois.
 const RPG_PRECOS_LOJA = {
@@ -27,13 +30,13 @@ const RPG_GRUPOS_VARIANTES = {
         principal: "ctrlc",
         ids: ["ctrlc", "ctrlv"],
         nome: "Ctrl C / Ctrl V",
-        descricao: "Duas formas da mesma gosma metamorfa. Elas copiam a passiva da última carta usada pelo oponente, recebendo a cópia com vida e dano reduzidos em 1. Ao desbloquear esta carta, as duas formas entram no sorteio das batalhas."
+        descricao: "Duas formas da mesma gosma metamorfa. Elas copiam a passiva da última carta usada pelo oponente, recebendo a cópia com vida e dano reduzidos em 1. Se a carta copiada não tiver Especial, podem rolar o dado: ao tirar 3, ganham +1 de dano. Ao desbloquear esta carta, as duas formas entram no sorteio das batalhas."
     },
     separado: {
         principal: "separado",
         ids: ["separado", "separado2"],
         nome: "Separado / Separadois",
-        descricao: "Duas formas da mesma carta de parceria. Ela escolhe uma carta aliada e passa a atacar junto dela; seu especial pode dividir a dupla entre alvos diferentes. Ao desbloquear esta carta, as duas formas entram no sorteio das batalhas."
+        descricao: "Duas formas da mesma carta de parceria. Ela escolhe uma carta aliada e passa a atacar junto dela. Ao tirar 6, o especial se torna permanente: em todas as rodadas seguintes, cada integrante da dupla pode atacar um alvo diferente, começando por qualquer uma das duas. Ao desbloquear esta carta, as duas formas entram no sorteio das batalhas."
     }
 };
 
@@ -148,9 +151,9 @@ const RPG_DESCRICOES_CARTAS = {
     bruxo: "Usa poções mágicas para transformar uma carta inimiga ou roubá-la para o próprio lado.",
     mensageiro: "Se tirar 6 no especial, entra em Modo Área e seus ataques passam a causar 2 de dano a todos os inimigos.",
     criador: "Ícaro transforma uma carta em outra; Thiago pode apagar ou desenhar 1 ponto de um atributo.",
-    separado: "Escolhe uma parceira e passa a atacar junto dela. Seu especial pode dividir a dupla entre dois alvos.",
-    separado2: "Forma dupla com outra carta e acompanha seus ataques. Pode trocar de parceira durante a partida.",
-    incendiario: "Espalha pólvora nos inimigos e inicia um ciclo de fogo que causa dano nas rodadas seguintes.",
+    separado: "Escolhe uma parceira e passa a atacar junto dela. Ao tirar 6, o especial fica permanente: a dupla pode atacar dois alvos diferentes em todas as rodadas, começando por qualquer integrante.",
+    separado2: "Forma dupla com outra carta e acompanha seus ataques. Ao tirar 6, o ataque dividido fica permanente e pode começar por qualquer integrante; também pode trocar de parceira.",
+    incendiario: "Espalha pólvora nos inimigos. Seu ataque atual é dividido igualmente entre duas queimadas; se ganhar ou perder ataque, o dano de cada fogo acompanha a mudança.",
     mago: "Em resultados 1, 4 ou 6, envenena um alvo: ele sofre 0,5 de dano extra por 2 rodadas.",
     triobarbaros: "Três Bárbaros com 3 de vida cada atacam em equipe com dano regressivo: 3, depois 2 e por fim 1.",
     escudo_item: "Entrega a uma tropa aliada um escudo que bloqueia completamente o próximo ataque.",
@@ -159,13 +162,13 @@ const RPG_DESCRICOES_CARTAS = {
     velux: "Concede velocidade a uma carta, permitindo que ela ataque duas vezes na rodada.",
     pocaotraicao: "Faz uma carta inimiga atacar pelas costas uma carta do próprio time.",
     unidao: "Reúne a força dos aliados e adiciona ao seu dano o maior ataque encontrado no próprio campo.",
-    ctrlc: "Copia a passiva da última carta usada pelo oponente, mas recebe a cópia com vida e dano reduzidos em 1.",
-    ctrlv: "Assim como o Ctrl C, assume a passiva da última carta inimiga usada com redução de 1 nos atributos.",
+    ctrlc: "Copia a passiva da última carta usada pelo oponente, mas recebe a cópia com vida e dano reduzidos em 1. Se ela não possuir Especial, tirar 3 no dado concede +1 de dano.",
+    ctrlv: "Assim como o Ctrl C, assume a passiva da última carta inimiga usada com redução de 1 nos atributos. Se ela não possuir Especial, tirar 3 no dado concede +1 de dano.",
     Bumerskeleton: "Lança um bumerangue em sequência. O especial pode fazê-lo voltar, incendiar ou congelar os alvos.",
-    viajante: "Volta uma carta no tempo para um estado anterior. Seu especial pode prender outra carta no tempo.",
+    viajante: "Rebobina o próprio time, restaurando Habilidades, Especiais e Passivas já usadas sem alterar vida ou dano. Sua própria viagem continua sendo de uso único. O especial pode prender uma carta inimiga no tempo.",
     pocaogelo: "Congela uma carta por 1 rodada. Se tirar 5, congela todas as cartas do inimigo.",
     adiv: "Poção ofensiva que remove imediatamente 1 ponto de vida de uma carta escolhida.",
-    vampi7: "Ataca junto das tropas aliadas e absorve vida. Com menos de 3 de vida fica intangível e não pode ser atacado.",
+    vampi7: "Ataca junto das tropas aliadas e absorve vida. Com menos de 3 de vida fica intangível enquanto possui aliados. Se for a última carta do time, perde a intangibilidade e recebe +1 de ataque enquanto estiver sozinho.",
     portable: "Por 2 rodadas, dispara junto de qualquer ataque aliado. Quando a bateria termina, cai e sai do campo.",
     plus_life: "Aprimoramento de resistência que concede +2 de vida permanentemente a uma carta aliada.",
     reviverta: "Escolhe uma carta do cemitério e a traz de volta para a mão com os atributos originais.",
@@ -182,6 +185,7 @@ let rpgPartidaPremiada = false;
 let rpgObservadorVitoria = null;
 let rpgTimerVitoria = null;
 let rpgUltimoFocoCarta = null;
+let rpgBauAbrindo = false;
 
 function dataLocalRpg() {
     let agora = new Date();
@@ -635,6 +639,90 @@ function mostrarMensagemBauRpg(texto) {
     });
 }
 
+function textoPremioBauRpg(premio) {
+    return premio?.texto || "O baú foi aberto!";
+}
+
+function mostrarAberturaBauRpg(premio, { supremo = false, era = null } = {}) {
+    document.querySelector(".abertura-bau-rpg")?.remove();
+    rpgBauAbrindo = true;
+
+    let overlay = document.createElement("div");
+    overlay.className = `abertura-bau-rpg${supremo ? " abertura-bau-supremo-rpg" : ""}`;
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-labelledby", "titulo-premio-bau-rpg");
+
+    let nomeEra = era && RPG_ERAS[era]
+        ? RPG_ERAS[era].nome.toUpperCase()
+        : supremo ? "BAÚ SUPREMO" : RPG_ERAS[obterEraAtualRpg()].nome.toUpperCase();
+    let visualPremio = premio.tipo === "carta"
+        ? `<img src="${premio.imagem}" alt="Carta ${premio.titulo}">`
+        : `<span class="icone-premio-bau-rpg" aria-hidden="true">${premio.icone || "🪙"}</span>`;
+
+    overlay.innerHTML = `
+        <div class="palco-abertura-bau-rpg">
+            <button type="button" class="btn-pular-bau-rpg" aria-label="Pular animação do baú">Pular</button>
+            <span class="etiqueta-abertura-bau-rpg">${nomeEra}</span>
+            <div class="luz-abertura-bau-rpg" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+            <div class="bau-animado-rpg" aria-hidden="true">
+                <img src="bau-recompensa.png" alt="">
+                <span class="feixe-bau-rpg"></span>
+            </div>
+            <article class="premio-revelado-bau-rpg">
+                <small>${premio.etiqueta}</small>
+                <div class="visual-premio-bau-rpg">${visualPremio}</div>
+                <h2 id="titulo-premio-bau-rpg">${premio.titulo}</h2>
+                <p>${premio.descricao}</p>
+                <button type="button" class="btn-continuar-bau-rpg">Continuar</button>
+            </article>
+        </div>
+    `;
+
+    let revelou = false;
+    let timers = [];
+    let btnPular = overlay.querySelector(".btn-pular-bau-rpg");
+    let btnContinuar = overlay.querySelector(".btn-continuar-bau-rpg");
+
+    function revelarPremio() {
+        if (revelou) return;
+        revelou = true;
+        timers.forEach(clearTimeout);
+        overlay.classList.add("bau-estourou-rpg", "premio-visivel-rpg");
+        btnPular.hidden = true;
+        setTimeout(() => btnContinuar.focus(), 80);
+    }
+
+    function fecharAbertura() {
+        if (!revelou) return revelarPremio();
+        overlay.classList.add("abertura-bau-saindo-rpg");
+        document.body.classList.remove("modal-bau-aberto-rpg");
+        rpgBauAbrindo = false;
+        setTimeout(() => overlay.remove(), 240);
+    }
+
+    btnPular.addEventListener("click", revelarPremio);
+    btnContinuar.addEventListener("click", fecharAbertura);
+    overlay.addEventListener("click", evento => {
+        if (evento.target === overlay && revelou) fecharAbertura();
+    });
+    overlay.addEventListener("keydown", evento => {
+        if (evento.key === "Escape") fecharAbertura();
+    });
+
+    document.body.appendChild(overlay);
+    document.body.classList.add("modal-bau-aberto-rpg");
+    btnPular.focus();
+    requestAnimationFrame(() => overlay.classList.add("bau-entrou-rpg"));
+
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        revelarPremio();
+    } else {
+        timers.push(setTimeout(() => overlay.classList.add("bau-prestes-abrir-rpg"), 560));
+        timers.push(setTimeout(revelarPremio, 1220));
+    }
+}
+
 function concederPremioBauRpg({ era = null, supremo = false } = {}) {
     let permitidas = supremo
         ? [...rpgCatalogo]
@@ -651,27 +739,59 @@ function concederPremioBauRpg({ era = null, supremo = false } = {}) {
         let variacao = supremo ? 451 : 56;
         let moedas = minimo + Math.floor(Math.random() * variacao);
         rpgProgresso.moedas += moedas;
-        return `🪙 O baú trouxe ${moedas} moedas!`;
+        return {
+            tipo: "moedas",
+            icone: "🪙",
+            etiqueta: "MOEDAS",
+            titulo: `${moedas} moedas`,
+            descricao: "As moedas foram adicionadas ao seu saldo.",
+            texto: `🪙 O baú trouxe ${moedas} moedas!`
+        };
     }
 
     if (sorteio < (supremo ? 0.72 : 0.75) && novas.length > 0) {
         let carta = escolherAleatorioRpg(novas);
         adicionarCartaColecaoRpg(carta.id, 1);
-        return `✨ Nova carta: ${nomeCartaExibicaoRpg(carta)}!`;
+        return {
+            tipo: "carta",
+            imagem: carta.img,
+            etiqueta: "NOVA CARTA",
+            titulo: nomeCartaExibicaoRpg(carta),
+            descricao: "Ela foi desbloqueada e adicionada à sua coleção.",
+            texto: `✨ Nova carta: ${nomeCartaExibicaoRpg(carta)}!`
+        };
     }
 
     let carta = escolherAleatorioRpg(repetidas.length ? repetidas : novas);
     if (!carta) {
         let moedas = supremo ? 500 : 60;
         rpgProgresso.moedas += moedas;
-        return `🪙 O baú trouxe ${moedas} moedas!`;
+        return {
+            tipo: "moedas",
+            icone: "🪙",
+            etiqueta: "MOEDAS",
+            titulo: `${moedas} moedas`,
+            descricao: "As moedas foram adicionadas ao seu saldo.",
+            texto: `🪙 O baú trouxe ${moedas} moedas!`
+        };
     }
 
     let quantidade = supremo ? 2 : 1;
     adicionarCartaColecaoRpg(carta.id, quantidade);
-    return quantidadeCartaRpg(carta.id) > quantidade
-        ? `🃏 ${quantidade} cópia(s) de ${nomeCartaExibicaoRpg(carta)}! Agora está x${quantidadeCartaRpg(carta.id)}.`
-        : `✨ Nova carta: ${nomeCartaExibicaoRpg(carta)}!`;
+    let total = quantidadeCartaRpg(carta.id);
+    let ehNova = total === quantidade;
+    return {
+        tipo: "carta",
+        imagem: carta.img,
+        etiqueta: ehNova ? "NOVA CARTA" : quantidade > 1 ? `+${quantidade} CÓPIAS` : "CARTA REPETIDA",
+        titulo: nomeCartaExibicaoRpg(carta),
+        descricao: ehNova
+            ? "Ela foi desbloqueada e adicionada à sua coleção."
+            : `Agora você possui ${total} cópia(s) desta carta.`,
+        texto: ehNova
+            ? `✨ Nova carta: ${nomeCartaExibicaoRpg(carta)}!`
+            : `🃏 ${quantidade} cópia(s) de ${nomeCartaExibicaoRpg(carta)}! Agora está x${total}.`
+    };
 }
 
 function abrirBauRpg(evento) {
@@ -682,21 +802,23 @@ function abrirBauRpg(evento) {
         mostrarMensagemBauRpg("Vença uma partida 1v1 para conquistar seu próximo baú.");
         return;
     }
+    if (rpgBauAbrindo) return;
 
     rpgProgresso.baus--;
-    let textoPremio = concederPremioBauRpg();
+    let premio = concederPremioBauRpg();
 
     salvarProgressoRpg();
     atualizarResumoMenuRpg();
     renderizarColecaoRpg();
     renderizarLojaRpg();
-    mostrarMensagemBauRpg(textoPremio);
+    mostrarMensagemBauRpg(textoPremioBauRpg(premio));
 
     let bau = slotClicado || document.querySelector(".bau-principal-rpg");
     let classeAnimacao = slotClicado ? "slot-bau-abrindo" : "bau-abrindo";
     bau.classList.remove(classeAnimacao);
     void bau.offsetWidth;
     bau.classList.add(classeAnimacao);
+    mostrarAberturaBauRpg(premio);
 }
 
 function hashRpg(texto) {
@@ -792,6 +914,7 @@ function comprarOfertaLojaRpg(oferta) {
     }
 
     let textoResultado = "";
+    let premioBau = null;
     if (oferta.tipo === "gratis") {
         let resultadoGratis = hashRpg(data + ":presente") % 2;
         if (resultadoGratis === 0) {
@@ -808,9 +931,11 @@ function comprarOfertaLojaRpg(oferta) {
             adicionarCartaColecaoRpg(oferta.carta.id, 1);
             textoResultado = `🃏 Você comprou mais 1 cópia de ${nomeCartaExibicaoRpg(oferta.carta)}.`;
         } else if (oferta.tipo === "bau-era") {
-            textoResultado = `📦 ${oferta.titulo} aberto: ${concederPremioBauRpg({ era: oferta.era })}`;
+            premioBau = concederPremioBauRpg({ era: oferta.era });
+            textoResultado = `📦 ${oferta.titulo} aberto: ${textoPremioBauRpg(premioBau)}`;
         } else if (oferta.tipo === "bau-supremo") {
-            textoResultado = `👑 Baú Supremo aberto: ${concederPremioBauRpg({ supremo: true })}`;
+            premioBau = concederPremioBauRpg({ supremo: true });
+            textoResultado = `👑 Baú Supremo aberto: ${textoPremioBauRpg(premioBau)}`;
         }
     }
 
@@ -820,6 +945,12 @@ function comprarOfertaLojaRpg(oferta) {
     renderizarColecaoRpg();
     renderizarLojaRpg();
     document.getElementById("mensagem-loja-rpg").textContent = textoResultado;
+    if (premioBau) {
+        mostrarAberturaBauRpg(premioBau, {
+            era: oferta.era || null,
+            supremo: oferta.tipo === "bau-supremo"
+        });
+    }
 }
 
 function renderizarLojaRpg() {
@@ -932,7 +1063,11 @@ function iniciarPartidaPeloMenuRpg(modo) {
     arena.setAttribute("aria-hidden", "false");
     document.body.classList.remove("tela-inicio-ativa");
 
-    let nomes = { pvp: "Player vs Player", "pve-solo": "Player vs Inimigo · 1v1" };
+    let nomes = {
+        pvp: "Player vs Player",
+        "pve-solo": "Player vs Inimigo · 1v1",
+        "pve-monstro-solo": "Invasão do Monstro · Ondas"
+    };
     document.getElementById("nome-modo-partida").textContent = nomes[modo] || "Arena";
     iniciarJogo();
     instalarObservadorVitoriaRpg();
@@ -956,9 +1091,15 @@ function instalarObservadorVitoriaRpg() {
 
 function verificarVitoriaRpg() {
     if (rpgPartidaPremiada || typeof jogoIniciado === "undefined" || !jogoIniciado || faseAbertura) return;
+    if (typeof window.rpgModoInimigoAtualizarEstado === "function") {
+        window.rpgModoInimigoAtualizarEstado();
+    }
     let cartasJ1 = quantidadeCartasDoLadoRpg("j1");
     let cartasJ2 = quantidadeCartasDoLadoRpg("j2");
-    if (cartasJ1 > 0 && cartasJ2 === 0) registrarVitoriaRpg("j1");
+    let monstroAindaTemCartas = typeof window.rpgModoInimigoAindaTemCartas === "function"
+        && window.rpgModoInimigoOndasAtivo()
+        && window.rpgModoInimigoAindaTemCartas();
+    if (cartasJ1 > 0 && cartasJ2 === 0 && !monstroAindaTemCartas) registrarVitoriaRpg("j1");
     else if (cartasJ2 > 0 && cartasJ1 === 0) registrarVitoriaRpg("j2");
 }
 
@@ -969,37 +1110,58 @@ function registrarVitoriaRpg(ladoVencedor) {
     if (rpgObservadorVitoria) rpgObservadorVitoria.disconnect();
 
     atualizarLimiteDiarioRpg();
-    let modoPontuado = window.rpgModoAtual === "pvp" || window.rpgModoAtual === "pve-solo";
+    let modoPontuado = window.rpgModoAtual === "pvp"
+        || window.rpgModoAtual === "pve-solo"
+        || window.rpgModoAtual === "pve-monstro-solo";
     let jogadorVenceu = ladoVencedor === "j1";
+    let modoInvasao = window.rpgModoAtual === "pve-monstro-solo";
     let bauRecebido = false;
-    let pontosGanhos = 0;
+    let pontosAlterados = 0;
+    let recompensaInvasao = modoInvasao
+        && typeof window.rpgModoInimigoObterRecompensaTrofeus === "function"
+        ? window.rpgModoInimigoObterRecompensaTrofeus(jogadorVenceu)
+        : null;
 
-    if (modoPontuado && jogadorVenceu) {
+    if (modoPontuado) {
         let pontosAntes = rpgProgresso.pontos;
-        rpgProgresso.pontos = Math.min(RPG_LIMITE_PONTOS, rpgProgresso.pontos + RPG_PONTOS_VITORIA);
-        pontosGanhos = rpgProgresso.pontos - pontosAntes;
-        rpgProgresso.vitorias++;
-        if (rpgProgresso.bausGanhosHoje < RPG_LIMITE_BAUS_DIA) {
-            rpgProgresso.baus++;
-            rpgProgresso.bausGanhosHoje++;
-            bauRecebido = true;
+        let ajustePontos = recompensaInvasao
+            ? recompensaInvasao.valor
+            : (jogadorVenceu ? RPG_PONTOS_VITORIA : -RPG_PONTOS_DERROTA);
+        rpgProgresso.pontos = Math.min(
+            RPG_LIMITE_PONTOS,
+            Math.max(0, rpgProgresso.pontos + ajustePontos)
+        );
+        pontosAlterados = rpgProgresso.pontos - pontosAntes;
+
+        if (jogadorVenceu) {
+            rpgProgresso.vitorias++;
+            if (rpgProgresso.bausGanhosHoje < RPG_LIMITE_BAUS_DIA) {
+                rpgProgresso.baus++;
+                rpgProgresso.bausGanhosHoje++;
+                bauRecebido = true;
+            }
+        } else {
+            rpgProgresso.derrotas++;
         }
-        sincronizarRecompensasGarantidasRpg();
-    } else if (modoPontuado) {
-        rpgProgresso.pontos = Math.max(0, rpgProgresso.pontos - RPG_PONTOS_DERROTA);
-        rpgProgresso.derrotas++;
+
+        if (pontosAlterados > 0) sincronizarRecompensasGarantidasRpg();
     }
     salvarProgressoRpg();
 
     let nomeVencedor = window.rpgModoAtual === "pvp"
         ? (ladoVencedor === "j1" ? "Jogador 1" : "Jogador 2")
         : (ladoVencedor === "j1" ? "Você" : "O inimigo");
-    let textoPontosVitoria = pontosGanhos > 0
-        ? `+${pontosGanhos} pontos`
+    let textoPontosVitoria = pontosAlterados > 0
+        ? `+${pontosAlterados} pontos`
         : "Pontuação máxima de 2026 alcançada";
-    let recompensa = jogadorVenceu
-        ? `${textoPontosVitoria}${bauRecebido ? " e +1 baú" : ". Limite diário de baús alcançado"}.`
-        : `−5 pontos. Pontuação atual: ${rpgProgresso.pontos}.`;
+    let textoBau = jogadorVenceu
+        ? (bauRecebido ? " Você também ganhou +1 baú." : " O limite diário de baús já foi alcançado.")
+        : "";
+    let recompensa = recompensaInvasao
+        ? `${recompensaInvasao.valor >= 0 ? "+" : "−"}${Math.abs(recompensaInvasao.valor)} troféus por ${recompensaInvasao.motivo}. Pontuação atual: ${rpgProgresso.pontos}.${textoBau}`
+        : (jogadorVenceu
+            ? `${textoPontosVitoria}${bauRecebido ? " e +1 baú" : ". Limite diário de baús alcançado"}.`
+            : `−5 pontos. Pontuação atual: ${rpgProgresso.pontos}.`);
 
     let overlay = document.createElement("div");
     overlay.className = "resultado-partida-rpg " + (jogadorVenceu ? "resultado-vitoria-rpg" : "resultado-derrota-rpg");
@@ -1061,6 +1223,9 @@ function inicializarTelaInicioRpg() {
 window.inicializarTelaInicioRpg = inicializarTelaInicioRpg;
 window.registrarVitoriaRpg = registrarVitoriaRpg;
 window.obterIdsCartasDisponiveisRpg = function () {
+    if (RPG_TESTE_TODAS_CARTAS_NAS_BATALHAS) {
+        return bancoDeCartas.map(carta => carta.id);
+    }
     return bancoDeCartas
         .filter(carta => quantidadeCartaRpg(carta.id) > 0)
         .map(carta => carta.id);
